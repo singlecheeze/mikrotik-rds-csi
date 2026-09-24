@@ -366,11 +366,12 @@ The CSI account requires these effective RouterOS policies:
 | RouterOS policy | Why the CSI account needs it |
 |---|---|
 | `rest-api` | Authenticate and access `/rest/*` |
+| `api` | Required on the validated RouterOS 7.24.4 RDS for REST requests; without it RouterOS logs the login attempt as `via api` and returns `std failure: not allowed (9)` |
 | `read` | Inspect system, pool, disk, and file state |
 | `write` | Create/update/delete CSI-managed file-backed `/disk` objects and backing files |
 | `test` | Required by RouterOS 7.24.x for `/system/resource` validation and related monitoring operations |
 
-Do **not** grant `policy`, `sensitive`, `ssh`, `ftp`, `api`, or `full` unless a future feature specifically requires them.
+The validated effective policy set is therefore `read,write,test,api,rest-api`. Do **not** grant `policy`, `sensitive`, `ssh`, `ftp`, or `full` unless a future feature specifically requires them.
 
 ### 1.9 Disable plain HTTP
 
@@ -399,8 +400,8 @@ For this CSI driver the desired state is:
 www:        disabled
 www-ssl:    enabled on TCP/443 with the REST server certificate
 rest-secure: yes
-api:        not required
-api-ssl:    not required
+native api service (TCP/8728):     not required
+native api-ssl service (TCP/8729): not required
 ```
 
 ### Optional: temporary plain-HTTP troubleshooting
@@ -444,7 +445,7 @@ If REST works as `admin` but the dedicated CSI user receives:
 }
 ```
 
-and the RDS log shows a failure `via api`, add the native `api` policy in addition to `rest-api`:
+and the RDS log shows a failure `via api`, verify that the required native `api` policy is present in addition to `rest-api`:
 
 ```routeros
 /user/group/set [find where name="openshift-csi"] \
@@ -462,6 +463,8 @@ Expected policy set:
 ```text
 read,write,test,api,rest-api
 ```
+
+> **Important:** the RouterOS `api` **user policy** is required for REST on the validated RDS/RouterOS 7.24.4 configuration. This does **not** mean the native RouterOS `api` service on TCP/8728 or `api-ssl` service on TCP/8729 must be enabled; the CSI driver still uses HTTPS REST through `www-ssl` on TCP/443.
 
 The `web` policy is not required for REST; `www-ssl` is the transport service, while user authorization is controlled by the API policies.
 
