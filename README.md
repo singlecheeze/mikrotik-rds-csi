@@ -308,7 +308,7 @@ Do not use `admin` for the deployed CSI driver. Create a dedicated account with 
 ```routeros
 /user/group/add \
     name=openshift-csi \
-    policy=read,write,rest-api
+    policy=read,write,test,api,rest-api
 
 /user/add \
     name=openshift-csi \
@@ -316,7 +316,22 @@ Do not use `admin` for the deployed CSI driver. Create a dedicated account with 
     password="REPLACE_WITH_STRONG_PASSWORD"
 ```
 
-Then verify the dedicated user and the CA chain together, without `-k`:
+> **RouterOS 7.24.x permission note:** the `test` policy is required for some read-only system/monitoring operations exposed through REST, including the `/system/resource` validation used below. Without it, authentication can succeed but RouterOS can return `std failure: not allowed (9)`.
+
+If the group already exists from an earlier version of this README, update it in place:
+
+```routeros
+/user/group/set [find where name="openshift-csi"] \
+    policy=read,write,test,api,rest-api
+```
+
+Verify the effective policy:
+
+```routeros
+/user/group/print detail where name="openshift-csi"
+```
+
+Then verify the dedicated user and CA chain together, without `-k`:
 
 ```bash
 curl \
@@ -326,17 +341,36 @@ curl \
   https://172.16.1.125/rest/system/resource | jq
 ```
 
-Verify `/rest/disk` as well:
+A successful response should contain the RDS system-resource JSON rather than `std failure: not allowed (9)`.
+
+Next validate each REST resource used by the CSI controller:
 
 ```bash
+# Storage inventory, capacity, pool health, and exported disks
 curl \
   --cacert ./rds-rest-ca.crt \
   --connect-timeout 5 \
   -u openshift-csi \
   https://172.16.1.125/rest/disk | jq
+
+# Backing-file lookup and cleanup during DeleteVolume
+curl \
+  --cacert ./rds-rest-ca.crt \
+  --connect-timeout 5 \
+  -u openshift-csi \
+  https://172.16.1.125/rest/file | jq
 ```
 
-Both commands should return JSON without a TLS certificate error.
+The CSI account requires these effective RouterOS policies:
+
+| RouterOS policy | Why the CSI account needs it |
+|---|---|
+| `rest-api` | Authenticate and access `/rest/*` |
+| `read` | Inspect system, pool, disk, and file state |
+| `write` | Create/update/delete CSI-managed file-backed `/disk` objects and backing files |
+| `test` | Required by RouterOS 7.24.x for `/system/resource` validation and related monitoring operations |
+
+Do **not** grant `policy`, `sensitive`, `ssh`, `ftp`, `api`, or `full` unless a future feature specifically requires them.
 
 ### 1.9 Disable plain HTTP
 
@@ -397,6 +431,39 @@ Once the test succeeds, configure HTTPS as described above and disable `www` aga
 - MikroTik RouterOS REST API: https://manual.mikrotik.com/docs/developer-guides/rest-api/
 - RouterOS IP services and web-server REST flags: https://help.mikrotik.com/docs/spaces/ROS/pages/103841820/Services
 - RouterOS certificates: https://manual.mikrotik.com/docs/authentication-authorization-accounting/certificates/
+
+### Troubleshoot `not allowed (9)`
+
+If REST works as `admin` but the dedicated CSI user receives:
+
+```json
+{
+  "detail": "std failure: not allowed (9)",
+  "error": 500,
+  "message": "Internal Server Error"
+}
+```
+
+and the RDS log shows a failure `via api`, add the native `api` policy in addition to `rest-api`:
+
+```routeros
+/user/group/set [find where name="openshift-csi"] \
+    policy=read,write,test,api,rest-api
+```
+
+Then verify:
+
+```routeros
+/user/group/print detail where name="openshift-csi"
+```
+
+Expected policy set:
+
+```text
+read,write,test,api,rest-api
+```
+
+The `web` policy is not required for REST; `www-ssl` is the transport service, while user authorization is controlled by the API policies.
 
 ## 2. Configure the OpenShift manifests
 
