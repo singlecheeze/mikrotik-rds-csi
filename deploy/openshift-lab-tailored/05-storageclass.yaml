@@ -1,0 +1,21 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: mikrotik-rds-nvme
+provisioner: rds.csi.mikrotik.com
+parameters: {}
+# Any of these optional parameters override the controller ConfigMap defaults:
+#   poolSlot: "storage-pool"
+#   poolPath: "/storage-pool"
+#   poolFilesystem: "xfs"
+#   poolRequiredState: "clean"
+#   requirePoolMounted: "true"
+#   reserveBytes: "1073741824"
+#   fileExtension: ".img"
+#   targetAddress: "192.0.2.10"
+#   targetPort: "4420"
+#   nqnPrefix: "nqn.2026-09.example:rds"
+#   nsid: "1"
+reclaimPolicy: Delete
+allowVolumeExpansion: false
+volumeBindingMode: Immediate

@@ -69,30 +69,32 @@ Generated CSI Python bindings are intentionally not checked in. `hack/generate-p
 
 Controller-wide defaults are read from environment variables. `deploy/openshift/01-config.yaml` exposes them through the `mikrotik-rds-csi-config` ConfigMap. The values marked **backend-specific** should be changed for each RDS installation.
 
-| Environment variable | Default | Purpose |
-|---|---|---|
-| `RDS_API_ENDPOINT` | required | RouterOS HTTPS REST endpoint, for example `https://rds.example.com` |
-| `RDS_API_TIMEOUT_SECONDS` | `15` | REST request timeout |
-| `RDS_TLS_VERIFY` | `true` | Verify the RouterOS TLS certificate |
-| `RDS_CA_FILE` | empty internally | Optional custom CA file; the manifest uses `/etc/rds-ca/ca.crt` |
-| `RDS_POOL_SLOT` | required at provision time | RouterOS `/disk` slot used for capacity/health checks |
-| `RDS_POOL_PATH` | required at provision time | Directory where CSI backing files are created; it may be the pool root or a pre-created subdirectory |
-| `RDS_POOL_FILESYSTEM` | `xfs` | Expected filesystem; empty disables filesystem validation |
-| `RDS_POOL_REQUIRED_STATE` | `clean` | Expected pool state; empty disables state validation |
-| `RDS_POOL_REQUIRE_MOUNTED` | `true` | Require `mounted=true` on the pool object |
-| `RDS_RESERVE_BYTES` | `1073741824` | Capacity held back from CSI `GetCapacity` and provisioning |
-| `RDS_FILE_EXTENSION` | `.img` | Backing-file extension; may be empty |
-| `RDS_NVME_TARGET_ADDRESS` | required at provision time | NVMe/TCP data-plane address advertised to nodes |
-| `RDS_NVME_TARGET_PORT` | `4420` | NVMe/TCP target port |
-| `RDS_NQN_PREFIX` | required at provision time | Prefix used to form `<prefix>.csi-<id>` |
-| `RDS_NVME_NSID` | `1` | Namespace ID returned in CSI volume context |
-| `RDS_CONNECT_TIMEOUT_SECONDS` | `20` | Node wait time for a namespace to appear |
-| `RDS_STORAGE_INTERFACE` | empty | Optional interface that the route to the target must use; empty accepts the kernel-selected route |
-| `RDS_USE_ROUTE_SOURCE_ADDRESS` | `true` | Derive `--host-traddr` from `ip route get`; disable if the environment does not require source binding |
-| `RDS_NVME_RECONNECT_DELAY_SECONDS` | `10` | `nvme connect --reconnect-delay` |
-| `RDS_NVME_CTRL_LOSS_TMO_SECONDS` | `600` | `nvme connect --ctrl-loss-tmo` |
-| `RDS_NVME_MODULE` | `nvme_tcp` | Kernel module loaded before connecting |
-| `RDS_NODE_STATE_DIR` | `/var/lib/mikrotik-rds-csi` | Persistent node-plugin state directory |
+The **Lab example** column shows the values used or directly validated in the development lab. For driver-only timing and local-state settings that are not properties reported by the RDS itself, the table shows the current lab/MVP setting.
+
+| Environment variable | Default | Lab example | Purpose |
+|---|---|---|---|
+| `RDS_API_ENDPOINT` | required | `https://172.16.1.125` | RouterOS HTTPS REST endpoint, for example `https://rds.example.com` |
+| `RDS_API_TIMEOUT_SECONDS` | `15` | `15` | REST request timeout |
+| `RDS_TLS_VERIFY` | `true` | `true` | Verify the RouterOS TLS certificate |
+| `RDS_CA_FILE` | empty internally | `/etc/rds-ca/ca.crt` | Optional custom CA file; the manifest uses `/etc/rds-ca/ca.crt` |
+| `RDS_POOL_SLOT` | required at provision time | `raid10` | RouterOS `/disk` slot used for capacity/health checks |
+| `RDS_POOL_PATH` | required at provision time | `/raid10` | Directory where CSI backing files are created; it may be the pool root or a pre-created subdirectory |
+| `RDS_POOL_FILESYSTEM` | `xfs` | `xfs` | Expected filesystem; empty disables filesystem validation |
+| `RDS_POOL_REQUIRED_STATE` | `clean` | `clean` | Expected pool state; empty disables state validation |
+| `RDS_POOL_REQUIRE_MOUNTED` | `true` | `true` | Require `mounted=true` on the pool object |
+| `RDS_RESERVE_BYTES` | `1073741824` | `1073741824` | Capacity held back from CSI `GetCapacity` and provisioning |
+| `RDS_FILE_EXTENSION` | `.img` | `.img` | Backing-file extension; may be empty |
+| `RDS_NVME_TARGET_ADDRESS` | required at provision time | `172.16.100.125` | NVMe/TCP data-plane address advertised to nodes |
+| `RDS_NVME_TARGET_PORT` | `4420` | `4420` | NVMe/TCP target port |
+| `RDS_NQN_PREFIX` | required at provision time | `nqn.2026-09.com.mikrotik:rds2216` | Prefix used to form `<prefix>.csi-<id>` |
+| `RDS_NVME_NSID` | `1` | `1` | Namespace ID returned in CSI volume context |
+| `RDS_CONNECT_TIMEOUT_SECONDS` | `20` | `20` | Node wait time for a namespace to appear |
+| `RDS_STORAGE_INTERFACE` | empty | `bond1.100` | Optional interface that the route to the target must use; empty accepts the kernel-selected route |
+| `RDS_USE_ROUTE_SOURCE_ADDRESS` | `true` | `true` | Derive `--host-traddr` from `ip route get`; disable if the environment does not require source binding |
+| `RDS_NVME_RECONNECT_DELAY_SECONDS` | `10` | `10` | `nvme connect --reconnect-delay` |
+| `RDS_NVME_CTRL_LOSS_TMO_SECONDS` | `600` | `600` | `nvme connect --ctrl-loss-tmo` |
+| `RDS_NVME_MODULE` | `nvme_tcp` | `nvme_tcp` | Kernel module loaded before connecting |
+| `RDS_NODE_STATE_DIR` | `/var/lib/mikrotik-rds-csi` | `/var/lib/mikrotik-rds-csi` | Persistent node-plugin state directory |
 
 For backward compatibility, `RDS_STORAGE_TARGET` and `RDS_STORAGE_PORT` are accepted as aliases for `RDS_NVME_TARGET_ADDRESS` and `RDS_NVME_TARGET_PORT`.
 

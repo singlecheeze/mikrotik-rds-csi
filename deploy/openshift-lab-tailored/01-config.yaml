@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mikrotik-rds-csi-config
+  namespace: mikrotik-rds-csi
+data:
+  # RouterOS management plane. Replace these deployment-specific values.
+  RDS_API_ENDPOINT: "https://172.16.1.125"
+  RDS_API_TIMEOUT_SECONDS: "15"
+  RDS_TLS_VERIFY: "true"
+  RDS_CA_FILE: "/etc/rds-ca/ca.crt"
+
+  # Default backing pool. These can be overridden per StorageClass.
+  RDS_POOL_SLOT: "raid10"
+  RDS_POOL_PATH: "/raid10"
+  RDS_POOL_FILESYSTEM: "xfs"
+  RDS_POOL_REQUIRED_STATE: "clean"
+  RDS_POOL_REQUIRE_MOUNTED: "true"
+  RDS_RESERVE_BYTES: "1073741824"
+  RDS_FILE_EXTENSION: ".img"
+
+  # Default NVMe/TCP export settings. These can also be overridden per
+  # StorageClass, except node connection behavior below.
+  RDS_NVME_TARGET_ADDRESS: "172.16.100.125"
+  RDS_NVME_TARGET_PORT: "4420"
+  RDS_NQN_PREFIX: "nqn.2026-09.com.mikrotik:rds2216"
+  RDS_NVME_NSID: "1"
+
+  # Node-side connection behavior.
+  RDS_CONNECT_TIMEOUT_SECONDS: "20"
+  RDS_STORAGE_INTERFACE: "bond1.100"
+  RDS_USE_ROUTE_SOURCE_ADDRESS: "true"
+  RDS_NVME_RECONNECT_DELAY_SECONDS: "10"
+  RDS_NVME_CTRL_LOSS_TMO_SECONDS: "600"
+  RDS_NVME_MODULE: "nvme_tcp"
+  RDS_NODE_STATE_DIR: "/var/lib/mikrotik-rds-csi"

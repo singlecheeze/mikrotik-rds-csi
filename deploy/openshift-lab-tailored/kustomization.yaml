@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespace.yaml
+  - 01-config.yaml
+  - 01-rbac.yaml
+  - 02-csidriver.yaml
+  - 03-controller.yaml
+  - 04-node.yaml
+  - 05-storageclass.yaml
+images:
+  - name: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newName: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newTag: 0.2.0

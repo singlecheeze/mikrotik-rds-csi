@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rds-csi-test
+  namespace: nvme-test
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rds-csi-test-use-privileged-scc
+  namespace: nvme-test
+rules:
+  - apiGroups: ["security.openshift.io"]
+    resources: ["securitycontextconstraints"]
+    resourceNames: ["privileged"]
+    verbs: ["use"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rds-csi-test-privileged
+  namespace: nvme-test
+subjects:
+  - kind: ServiceAccount
+    name: rds-csi-test
+    namespace: nvme-test
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: rds-csi-test-use-privileged-scc
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rds-csi-test
+  namespace: nvme-test
+spec:
+  serviceAccountName: rds-csi-test
+  containers:
+    - name: test
+      image: registry.access.redhat.com/ubi9/ubi:latest
+      command: ["/bin/bash", "-c"]
+      args:
+        - |
+          set -euxo pipefail
+          ls -l /dev/rds-test
+          blockdev --getsize64 /dev/rds-test
+          dd if=/dev/rds-test of=/dev/null bs=4096 count=1 status=progress
+          sleep infinity
+      securityContext:
+        privileged: true
+        runAsUser: 0
+      volumeDevices:
+        - name: disk
+          devicePath: /dev/rds-test
+  volumes:
+    - name: disk
+      persistentVolumeClaim:
+        claimName: rds-csi-test
