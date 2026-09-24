@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mikrotik-rds-csi-node
+  namespace: mikrotik-rds-csi
+spec:
+  selector:
+    matchLabels:
+      app: mikrotik-rds-csi-node
+  template:
+    metadata:
+      labels:
+        app: mikrotik-rds-csi-node
+    spec:
+      serviceAccountName: mikrotik-rds-csi-node
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: csi-driver
+          image: quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+          imagePullPolicy: Always
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            allowPrivilegeEscalation: true
+          args:
+            - --mode=node
+            - --endpoint=unix:///csi/csi.sock
+          envFrom:
+            - configMapRef:
+                name: mikrotik-rds-csi-config
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              mountPropagation: Bidirectional
+            - name: dev-dir
+              mountPath: /dev
+            - name: sys-dir
+              mountPath: /sys
+              readOnly: true
+            - name: modules-dir
+              mountPath: /lib/modules
+              readOnly: true
+            - name: state-dir
+              mountPath: /var/lib/mikrotik-rds-csi
+        - name: node-driver-registrar
+          image: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.17.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path=/var/lib/kubelet/plugins/rds.csi.mikrotik.com/csi.sock
+            - --v=4
+          volumeMounts:
+            - name: plugin-dir
+              mountPath: /csi
+            - name: registration-dir
+              mountPath: /registration
+      volumes:
+        - name: plugin-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins/rds.csi.mikrotik.com
+            type: DirectoryOrCreate
+        - name: registration-dir
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: Directory
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: dev-dir
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: sys-dir
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: modules-dir
+          hostPath:
+            path: /lib/modules
+            type: Directory
+        - name: state-dir
+          hostPath:
+            path: /var/lib/mikrotik-rds-csi
+            type: DirectoryOrCreate

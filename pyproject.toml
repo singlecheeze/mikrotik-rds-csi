@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mikrotik-rds-csi"
+version = "0.2.0"
+description = "Experimental CSI driver for MikroTik RDS NVMe/TCP storage"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+dependencies = [
+  "grpcio==1.84.0",
+  "protobuf==7.36.2",
+  "requests>=2.32.0,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools==1.84.0",
+  "pytest>=8,<10",
+]
+
+[project.scripts]
+mikrotik-rds-csi = "mikrotik_rds_csi.server:main"
+
+[tool.setuptools.packages.find]
+include = ["mikrotik_rds_csi*"]

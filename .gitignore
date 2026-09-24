@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+proto/csi.proto
+mikrotik_rds_csi/generated/csi_pb2.py
+mikrotik_rds_csi/generated/csi_pb2_grpc.py

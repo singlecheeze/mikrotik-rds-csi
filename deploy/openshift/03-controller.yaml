@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mikrotik-rds-csi-controller
+  namespace: mikrotik-rds-csi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mikrotik-rds-csi-controller
+  template:
+    metadata:
+      labels:
+        app: mikrotik-rds-csi-controller
+    spec:
+      serviceAccountName: mikrotik-rds-csi-controller
+      containers:
+        - name: csi-driver
+          image: quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+          imagePullPolicy: Always
+          args:
+            - --mode=controller
+            - --endpoint=unix:///csi/csi.sock
+          envFrom:
+            - configMapRef:
+                name: mikrotik-rds-csi-config
+          env:
+            - name: RDS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: rds-credentials
+                  key: username
+            - name: RDS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rds-credentials
+                  key: password
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+        - name: csi-provisioner
+          image: registry.k8s.io/sig-storage/csi-provisioner:v6.3.0
+          args:
+            - --csi-address=/csi/csi.sock
+            - --timeout=60s
+            - --v=4
+          volumeMounts:
+            - name: socket-dir
+              mountPath: /csi
+      volumes:
+        - name: socket-dir
+          emptyDir: {}
+        - name: rds-ca
+          configMap:
+            name: rds-rest-ca
+            optional: true
