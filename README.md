@@ -119,16 +119,284 @@ parameters:
 
 Any omitted parameter falls back to the ConfigMap/environment default. The RouterOS management endpoint and credentials are controller-wide in this release.
 
-## 1. Configure RouterOS REST access
+## 1. Configure and validate RouterOS REST access
 
-Create a dedicated RouterOS account rather than using `admin`:
+The CSI controller uses the RouterOS REST API over HTTPS. RouterOS REST is provided by the `www-ssl` service; the separate `api` and `api-ssl` services on ports 8728/8729 are **not required** by this driver.
 
-```routeros
-/user/group/add name=openshift-csi policy=read,write,rest-api
-/user/add name=openshift-csi group=openshift-csi password="REPLACE_WITH_STRONG_PASSWORD"
+The examples below use the values validated in the development lab:
+
+```text
+RDS management IP:     172.16.1.125
+Allowed management net: 172.16.1.0/24
+REST HTTPS port:        443
+CA name:                rds-rest-ca
+Server cert name:       rds-rest-server
 ```
 
-Use HTTPS REST through `www-ssl`. If the RDS uses a private CA, export that CA as PEM for the CSI controller.
+Replace the management IP/subnet and certificate names as appropriate for your environment.
+
+### 1.1 Check the RouterOS web/API services
+
+On the RDS, inspect the relevant services:
+
+```routeros
+/ip/service/print detail where name~"www|api"
+```
+
+For REST over HTTPS, `www-ssl` must be enabled. `api` and `api-ssl` may remain disabled because they are the native RouterOS API, not the REST API.
+
+Also check the RouterOS web-server feature flags:
+
+```routeros
+/ip/service/webserver/print
+```
+
+Confirm:
+
+```text
+rest-secure: yes
+```
+
+If needed, enable secure REST:
+
+```routeros
+/ip/service/webserver/set rest-secure=yes
+```
+
+Plain HTTP REST (`rest-plain`) is not required for the CSI driver.
+
+### 1.2 Check for an existing HTTPS certificate
+
+```routeros
+/certificate/print detail
+```
+
+If `www-ssl` already uses a valid certificate whose name/IP is trusted by the CSI controller, reuse it and skip to **1.5**. Otherwise, create a local CA and an RDS server certificate as shown below.
+
+### 1.3 Create and sign a local CA
+
+Create the CA template:
+
+```routeros
+/certificate/add \
+    name=rds-rest-ca \
+    common-name=rds-rest-ca \
+    key-usage=key-cert-sign,crl-sign
+```
+
+The CA must be signed **before** it can be used to sign the server certificate:
+
+```routeros
+/certificate/sign rds-rest-ca
+```
+
+Verify it:
+
+```routeros
+/certificate/print detail where name="rds-rest-ca"
+```
+
+A locally generated CA should show the private-key, authority, and trusted flags (`KAT`).
+
+### 1.4 Create and sign the REST server certificate
+
+The certificate should contain the RDS management IP or DNS name in its Subject Alternative Name. The validated lab uses `172.16.1.125`:
+
+```routeros
+/certificate/add \
+    name=rds-rest-server \
+    common-name=172.16.1.125 \
+    subject-alt-name=IP:172.16.1.125 \
+    key-usage=tls-server
+```
+
+Sign it with the CA:
+
+```routeros
+/certificate/sign \
+    rds-rest-server \
+    ca=rds-rest-ca
+```
+
+Verify the chain and SAN:
+
+```routeros
+/certificate/print detail where name~"rds-rest"
+```
+
+The server certificate should report `ca=rds-rest-ca` and `subject-alt-name=IP:172.16.1.125` (or your configured DNS/IP SAN).
+
+### 1.5 Enable `www-ssl` and restrict management access
+
+Assign the certificate to `www-ssl`, enable the service, and restrict it to the trusted management network. On the RouterOS 7.24.x RDS used in the lab, the current property is `available-from`:
+
+```routeros
+/ip/service/set [find where name="www-ssl"] \
+    certificate=rds-rest-server \
+    disabled=no \
+    available-from=172.16.1.0/24
+```
+
+Verify:
+
+```routeros
+/ip/service/print detail where name="www-ssl"
+```
+
+Expected lab-style result:
+
+```text
+name="www-ssl" port=443 proto=tcp available-from=172.16.1.0/24 certificate=rds-rest-server
+```
+
+> **RouterOS version note:** some RouterOS documentation/releases show this restriction as `address=` instead of `available-from=`. Use the property shown by `/ip/service/print detail` on your RDS.
+
+### 1.6 Export the CA certificate
+
+Export the CA as PEM so the OpenShift CSI controller can validate the RDS certificate without disabling TLS verification:
+
+```routeros
+/certificate/export-certificate \
+    rds-rest-ca \
+    type=pem \
+    file-name=rds-rest-ca
+```
+
+Confirm the exported file exists:
+
+```routeros
+/file/print where name~"rds-rest-ca"
+```
+
+Copy/download the exported CA certificate to the system from which you will deploy the CSI driver. In the examples below it is saved as `rds-rest-ca.crt`.
+
+### 1.7 Verify REST over HTTPS before creating the CSI account
+
+From a client on the allowed management network, first test HTTPS while ignoring CA validation. This is only a connectivity/certificate-bootstrap test:
+
+```bash
+curl -kv \
+  --connect-timeout 5 \
+  -u admin \
+  https://172.16.1.125/rest/system/resource
+```
+
+A working REST endpoint should return:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: application/json
+```
+
+followed by the RDS system-resource JSON.
+
+Next verify the storage endpoint that the CSI controller actually needs:
+
+```bash
+curl -sk \
+  --connect-timeout 5 \
+  -u admin \
+  https://172.16.1.125/rest/disk | jq
+```
+
+The result should include the RDS hardware disks, configured RAID/pool objects, and any existing file-backed disk exports.
+
+### 1.8 Create the dedicated CSI RouterOS account
+
+Do not use `admin` for the deployed CSI driver. Create a dedicated account with the REST permissions needed by the controller:
+
+```routeros
+/user/group/add \
+    name=openshift-csi \
+    policy=read,write,rest-api
+
+/user/add \
+    name=openshift-csi \
+    group=openshift-csi \
+    password="REPLACE_WITH_STRONG_PASSWORD"
+```
+
+Then verify the dedicated user and the CA chain together, without `-k`:
+
+```bash
+curl \
+  --cacert ./rds-rest-ca.crt \
+  --connect-timeout 5 \
+  -u openshift-csi \
+  https://172.16.1.125/rest/system/resource | jq
+```
+
+Verify `/rest/disk` as well:
+
+```bash
+curl \
+  --cacert ./rds-rest-ca.crt \
+  --connect-timeout 5 \
+  -u openshift-csi \
+  https://172.16.1.125/rest/disk | jq
+```
+
+Both commands should return JSON without a TLS certificate error.
+
+### 1.9 Disable plain HTTP
+
+The CSI driver should use HTTPS only. After HTTPS REST is working, disable the plain `www` service:
+
+```routeros
+/ip/service/set [find where name="www"] disabled=yes
+```
+
+Optionally disable the plain REST feature as an additional hardening step if it is not used by anything else:
+
+```routeros
+/ip/service/webserver/set rest-plain=no
+```
+
+Confirm the final state:
+
+```routeros
+/ip/service/print detail where name~"www|api"
+/ip/service/webserver/print
+```
+
+For this CSI driver the desired state is:
+
+```text
+www:        disabled
+www-ssl:    enabled on TCP/443 with the REST server certificate
+rest-secure: yes
+api:        not required
+api-ssl:    not required
+```
+
+### Optional: temporary plain-HTTP troubleshooting
+
+If HTTPS is not yet configured and you only need to prove that REST itself responds, temporarily enable `www` and `rest-plain` on a trusted management network:
+
+```routeros
+/ip/service/set [find where name="www"] \
+    disabled=no \
+    available-from=172.16.1.0/24
+
+/ip/service/webserver/set rest-plain=yes
+```
+
+Then test:
+
+```bash
+curl -v \
+  --connect-timeout 5 \
+  -u admin \
+  http://172.16.1.125/rest/system/resource
+```
+
+Once the test succeeds, configure HTTPS as described above and disable `www` again. Do not leave Basic-authenticated REST exposed over plain HTTP.
+
+### RouterOS REST references
+
+- MikroTik RouterOS REST API: https://manual.mikrotik.com/docs/developer-guides/rest-api/
+- RouterOS IP services and web-server REST flags: https://help.mikrotik.com/docs/spaces/ROS/pages/103841820/Services
+- RouterOS certificates: https://manual.mikrotik.com/docs/authentication-authorization-accounting/certificates/
 
 ## 2. Configure the OpenShift manifests
 
