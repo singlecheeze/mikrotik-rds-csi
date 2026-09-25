@@ -684,17 +684,54 @@ make generate
 make test
 ```
 
+`make generate` invokes the helper through `bash`, so it does not depend on the executable bit being preserved when the repository is copied or extracted. The Containerfile uses the same approach during image builds.
+
 The activated virtual environment should report Python 3.10 or newer; Python 3.11 is the recommended RHEL 9 development version. `grpcio==1.84.0` and `grpcio-tools==1.84.0` require Python 3.10 or newer. If pip reports that it can only find `grpcio` versions through `1.80.0`, check `python --version`: that symptom usually means the virtual environment was created with Python 3.9.
 
 The container build performs protobuf generation automatically and uses Python 3.11, so this local virtual-environment setup is only required for running the CSI server/tests directly from the checkout.
 
 ## 5. Build and push the image
 
+Quay image references use the registry form `quay.io/<namespace>/<repository>:<tag>`. Do **not** include `/repository/` in the image reference. Quay's web UI uses URLs such as `https://quay.io/repository/<namespace>/<repository>`, but `/repository/` is not part of the container image name.
+
+For example, if the Quay namespace is `singlecheeze`, use:
+
+```text
+quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
+```
+
+Authenticate to Quay before pushing:
+
+```bash
+podman login quay.io
+```
+
+Use your Quay username/password or a robot account/token that has write access to the repository. Then build and push:
+
 ```bash
 IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
 podman build -f Containerfile -t "${IMAGE}" .
 podman push "${IMAGE}"
 ```
+
+A successful build followed by an `authentication required` error during `podman push` normally means either:
+
+- `podman login quay.io` has not been completed for the current user;
+- the authenticated account does not have write access to the target namespace/repository; or
+- the image was tagged with a Quay web-UI path such as `quay.io/repository/<namespace>/<repository>` instead of the registry path `quay.io/<namespace>/<repository>`.
+
+If an image was already built with the incorrect `/repository/` path, it does not need to be rebuilt. Retag it and push the corrected name:
+
+```bash
+podman tag \
+  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.0 \
+  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
+
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
+podman push "${IMAGE}"
+```
+
+If the repository does not yet exist, create `mikrotik-rds-csi` in the desired Quay namespace or use an account that is allowed to create repositories in that namespace.
 
 Update `deploy/openshift/kustomization.yaml`:
 

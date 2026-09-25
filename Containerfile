@@ -12,7 +12,7 @@ COPY hack ./hack
 COPY mikrotik_rds_csi ./mikrotik_rds_csi
 
 RUN python -m pip install --no-cache-dir grpcio-tools==1.84.0 protobuf==7.36.2 \
-    && CSI_SPEC_VERSION="${CSI_SPEC_VERSION}" ./hack/generate-proto.sh \
+    && CSI_SPEC_VERSION="${CSI_SPEC_VERSION}" bash ./hack/generate-proto.sh \
     && python -m pip wheel --no-cache-dir --wheel-dir /wheels .
 
 FROM python:3.11-slim-bookworm
