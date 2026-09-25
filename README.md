@@ -810,9 +810,24 @@ oc patch storageprofile mikrotik-rds-nvme --type=merge -p '
 
 ## 8. Dynamic PVC test
 
+The test PVC and pod are created in the `nvme-test` namespace. Create the namespace first if it does not already exist. The following command is idempotent, so it is safe to run whether or not the namespace already exists:
+
+```bash
+oc create namespace nvme-test \
+  --dry-run=client -o yaml | oc apply -f -
+```
+
+Then create the test PVC and watch it bind:
+
 ```bash
 oc apply -f deploy/openshift/06-test-pvc.yaml
 oc -n nvme-test get pvc rds-csi-test -w
+```
+
+If you are using a deployment-specific manifest directory such as `deploy/openshift-lab-tailored`, apply the corresponding test manifest from that directory instead, for example:
+
+```bash
+oc apply -f deploy/openshift-lab-tailored/06-test-pvc.yaml
 ```
 
 A successful provision creates a RouterOS file disk whose path, NQN prefix, target address, target port, and NSID all come from the resolved ConfigMap/StorageClass configuration.
