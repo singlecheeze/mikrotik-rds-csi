@@ -76,7 +76,7 @@ The **Lab example** column shows the values used or directly validated in the de
 | `RDS_API_ENDPOINT` | required | `https://172.16.1.125` | RouterOS HTTPS REST endpoint, for example `https://rds.example.com` |
 | `RDS_API_TIMEOUT_SECONDS` | `15` | `15` | REST request timeout |
 | `RDS_TLS_VERIFY` | `true` | `true` | Verify the RouterOS TLS certificate |
-| `RDS_CA_FILE` | empty internally | `/etc/rds-ca/ca.crt` | Optional custom CA file; the manifest uses `/etc/rds-ca/ca.crt` |
+| `RDS_CA_FILE` | empty internally | `/etc/rds-ca/ca.crt` | Path **inside the CSI controller container** to a custom CA certificate. The supplied controller manifest mounts the `rds-rest-ca` ConfigMap at `/etc/rds-ca`, so its `ca.crt` key appears as `/etc/rds-ca/ca.crt`. Leave empty to use the container system trust store. |
 | `RDS_POOL_SLOT` | required at provision time | `raid10` | RouterOS `/disk` slot used for capacity/health checks |
 | `RDS_POOL_PATH` | required at provision time | `/raid10` | Directory where CSI backing files are created; it may be the pool root or a pre-created subdirectory |
 | `RDS_POOL_FILESYSTEM` | `xfs` | `xfs` | Expected filesystem; empty disables filesystem validation |
@@ -534,7 +534,92 @@ oc -n mikrotik-rds-csi create configmap rds-rest-ca \
   --dry-run=client -o yaml | oc apply -f -
 ```
 
-If the certificate chains to a CA already trusted by the container image, set `RDS_CA_FILE` to an empty string and the `rds-rest-ca` ConfigMap is not required. For temporary lab testing only, `RDS_TLS_VERIFY=false` disables certificate verification.
+### How the private CA ConfigMap and `RDS_CA_FILE` work together
+
+These are two parts of the **same TLS configuration**, not two separate CA mechanisms.
+
+The command above stores the local `./rds-rest-ca.crt` file in Kubernetes as a ConfigMap named `rds-rest-ca`, under the key `ca.crt`. The controller Deployment in `deploy/openshift/03-controller.yaml` mounts that ConfigMap read-only at `/etc/rds-ca`:
+
+```yaml
+volumeMounts:
+  - name: rds-ca
+    mountPath: /etc/rds-ca
+    readOnly: true
+
+volumes:
+  - name: rds-ca
+    configMap:
+      name: rds-rest-ca
+      optional: true
+```
+
+Because the ConfigMap key is named `ca.crt`, the mounted file inside the `csi-driver` container is:
+
+```text
+/etc/rds-ca/ca.crt
+```
+
+The setting in `deploy/openshift/01-config.yaml`:
+
+```yaml
+RDS_TLS_VERIFY: "true"
+RDS_CA_FILE: "/etc/rds-ca/ca.crt"
+```
+
+tells the Python RouterOS client to verify the RDS HTTPS server certificate using that mounted CA certificate. The end-to-end flow is:
+
+```text
+./rds-rest-ca.crt on the administrator workstation
+        |
+        | oc create configmap
+        v
+rds-rest-ca ConfigMap
+  key: ca.crt
+        |
+        | mounted by the CSI controller Deployment
+        v
+/etc/rds-ca/ca.crt inside the csi-driver container
+        |
+        | RDS_CA_FILE points to this file
+        v
+Python HTTPS certificate verification
+        |
+        v
+RouterOS REST endpoint
+```
+
+For the validated lab configuration, keep both of these values:
+
+```yaml
+RDS_TLS_VERIFY: "true"
+RDS_CA_FILE: "/etc/rds-ca/ca.crt"
+```
+
+and create the `rds-rest-ca` ConfigMap from the exported RouterOS CA before deploying the controller.
+
+> **Important:** `rds-rest-ca` is marked `optional: true` in the controller Deployment so the same manifest can also be used when the RDS certificate is signed by a CA already trusted by the container image. However, if `RDS_CA_FILE` is set to `/etc/rds-ca/ca.crt` and the ConfigMap does not exist, that file will not exist in the container and REST TLS verification will fail.
+
+If the RDS certificate chains to a CA already trusted by the container image, use:
+
+```yaml
+RDS_TLS_VERIFY: "true"
+RDS_CA_FILE: ""
+```
+
+In that case the driver uses the container's normal system CA trust store, and the `rds-rest-ca` ConfigMap is not required.
+
+For temporary lab troubleshooting only, `RDS_TLS_VERIFY=false` disables TLS certificate verification entirely. Do not use that setting for a normal deployment.
+
+After the controller is deployed, you can confirm both the environment variable and mounted CA file with:
+
+```bash
+oc -n mikrotik-rds-csi exec \
+  deploy/mikrotik-rds-csi-controller \
+  -c csi-driver -- \
+  python -c 'import os; from pathlib import Path; p=Path(os.environ.get("RDS_CA_FILE", "")); print("RDS_CA_FILE=", p); print("exists=", p.exists()); print("bytes=", p.stat().st_size if p.exists() else 0)'
+```
+
+For a private-CA deployment, the expected output should show `/etc/rds-ca/ca.crt`, `exists=True`, and a non-zero file size.
 
 Create the API credentials:
 
