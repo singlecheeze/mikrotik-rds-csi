@@ -1,0 +1,22 @@
+# EXTREMELY DESTRUCTIVE - manual RouterOS commands
+#
+# These commands remove filesystem/RAID metadata from the eight lab NVMe drives
+# using RouterOS wipe-quick formatting. They are provided for rebuild/lab reset
+# scenarios only. DO NOT run them against drives containing data you need.
+#
+# Before using them:
+#   1. Stop CSI workloads and remove any exported file-backed LUNs.
+#   2. Remove/detach any existing RAID objects using these devices.
+#   3. Confirm nvme1..nvme8 are really the intended physical disks.
+#   4. Expect RouterOS to ask for confirmation for destructive format operations.
+#
+# There is intentionally no automated "yes" here.
+
+/disk format nvme1 file-system=wipe-quick
+/disk format nvme2 file-system=wipe-quick
+/disk format nvme3 file-system=wipe-quick
+/disk format nvme4 file-system=wipe-quick
+/disk format nvme5 file-system=wipe-quick
+/disk format nvme6 file-system=wipe-quick
+/disk format nvme7 file-system=wipe-quick
+/disk format nvme8 file-system=wipe-quick

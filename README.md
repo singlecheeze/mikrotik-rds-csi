@@ -119,6 +119,52 @@ parameters:
 
 Any omitted parameter falls back to the ConfigMap/environment default. The RouterOS management endpoint and credentials are controller-wide in this release.
 
+## Optional RouterOS storage preparation and maintenance scripts
+
+The repository includes the RouterOS storage helpers developed while building and validating this CSI driver under [`scripts/routeros/`](scripts/routeros/). These are **administrative/bootstrap tools**, not runtime dependencies of the CSI driver.
+
+The included helpers are:
+
+| File | Use |
+|---|---|
+| `build-ocp-raid10.rsc` | Builds the validated eight-disk nested RAID10 layout: four two-disk RAID1 mirrors striped by a top-level RAID0 with a `256K` chunk. |
+| `format-xfs.commands.txt` | Manual XFS format command used after RAID synchronization. It is intentionally not automated because formatting is destructive and RouterOS requires confirmation. |
+| `verify-ocp-storage.rsc` | Checks that the configured pool exists, is `clean`, is XFS, and is mounted before it is used for CSI backing files. |
+| `trim-ocp-storage.rsc` | Performs a guarded `/disk trim` only after validating pool state, filesystem, and mount state. |
+| `schedule-trim-weekly.rsc` | Installs the weekly 03:00 TRIM schedule used in the lab. |
+| `create-ocp-vm-lun-example.rsc` | Retains the manual file-backed NVMe/TCP LUN workflow used during development; normally the CSI controller now performs these operations dynamically through REST. |
+| `wipe-quick-nvme.commands.txt` | Manual destructive `wipe-quick` commands for the eight lab NVMe drives for complete rebuild/reset scenarios. |
+
+The script defaults intentionally document the validated lab layout (`nvme1`-`nvme8`, `raid10`, `raid10-m0`-`raid10-m3`, `256K` RAID0 chunk, XFS, and port `4420`), but the RouterOS script files place installation-specific values near the top so they can be edited for another RDS.
+
+For example, after uploading `build-ocp-raid10.rsc` to a new/empty RDS:
+
+```routeros
+/import file-name=build-ocp-raid10.rsc
+/system/script/run build-ocp-raid10
+```
+
+The builder waits for the mirror arrays and top-level array to report `clean`, then prints the manual XFS format command. After formatting, the validation helper can be imported and run:
+
+```routeros
+/import file-name=verify-ocp-storage.rsc
+/system/script/run verify-ocp-storage
+```
+
+For TRIM maintenance:
+
+```routeros
+/import file-name=trim-ocp-storage.rsc
+/system/script/run trim-ocp-storage
+
+# Only after the manual TRIM succeeds:
+/import file-name=schedule-trim-weekly.rsc
+```
+
+> **Destructive operations:** RAID creation, `wipe-quick`, and filesystem formatting can destroy data. Review the physical disk names and target pool before running them. The format and wipe helpers are deliberately provided as manual command files rather than unattended scripts.
+
+See [`scripts/routeros/README.md`](scripts/routeros/README.md) for the full sequence and per-script notes.
+
 ## 1. Configure and validate RouterOS REST access
 
 The CSI controller uses the RouterOS REST API over HTTPS. RouterOS REST is provided by the `www-ssl` service; the separate `api` and `api-ssl` services on ports 8728/8729 are **not required** by this driver.

@@ -1,0 +1,23 @@
+# DESTRUCTIVE - manual RouterOS command
+#
+# The lab RAID was formatted with the following command after all RAID members
+# and the top-level array reported state=clean:
+#
+#   /disk format raid10 file-system=xfs label=ocp-storage mbr-partition-table=no
+#
+# RouterOS prompts:
+#   All data will be lost, are you sure? [y/N]:
+#
+# This is intentionally NOT wrapped in an auto-run script. Review the target slot
+# and answer the confirmation prompt manually.
+#
+# Validated lab result:
+#   filesystem: XFS
+#   inode size: 512
+#   allocation groups: 32
+#   reflink: enabled
+#   data stripe unit: 256 KiB
+#   stripe width: 1 MiB
+#   internal log stripe unit: 256 KiB
+
+/disk format raid10 file-system=xfs label=ocp-storage mbr-partition-table=no
