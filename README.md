@@ -58,7 +58,7 @@ Python is only in the provisioning and attach control path. Application I/O flow
 
 - OpenShift target: 4.22 / Kubernetes 1.35
 - CSI protobuf: v1.12.0
-- Python: 3.11+
+- Python: 3.10+ (Python 3.11 is used by the Containerfile and recommended for RHEL 9 development)
 - gRPC Python: 1.84.0
 - external-provisioner: v6.3.0
 - node-driver-registrar: v2.17.0
@@ -652,15 +652,41 @@ It prints the configured pool object and any current file-backed RouterOS disks 
 
 ## 4. Generate protobuf bindings for local development
 
+The project requires Python 3.10 or newer. On RHEL 9, the unversioned `python3` command normally points to Python 3.9, so **do not use `python3 -m venv` on a default RHEL 9 host** for this project. Use Python 3.11 explicitly (recommended and also used by the Containerfile), or another Python version >= 3.10.
+
+Check the versions first:
+
 ```bash
-python3 -m venv .venv
+python3 --version
+python3.11 --version
+```
+
+On RHEL 9, install Python 3.11 and its pip package if they are not already present:
+
+```bash
+sudo dnf install -y python3.11 python3.11-pip
+```
+
+If `.venv` was previously created with the default RHEL 9 `python3`/Python 3.9, remove it and recreate it with Python 3.11:
+
+```bash
+deactivate 2>/dev/null || true
+rm -rf .venv
+
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+
+python --version
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e '.[dev]'
+
 make generate
 make test
 ```
 
-The container build performs protobuf generation automatically.
+The activated virtual environment should report Python 3.10 or newer; Python 3.11 is the recommended RHEL 9 development version. `grpcio==1.84.0` and `grpcio-tools==1.84.0` require Python 3.10 or newer. If pip reports that it can only find `grpcio` versions through `1.80.0`, check `python --version`: that symptom usually means the virtual environment was created with Python 3.9.
+
+The container build performs protobuf generation automatically and uses Python 3.11, so this local virtual-environment setup is only required for running the CSI server/tests directly from the checkout.
 
 ## 5. Build and push the image
 
