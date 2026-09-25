@@ -742,6 +742,31 @@ images:
     newTag: 0.2.0
 ```
 
+The base manifests intentionally keep the placeholder image:
+
+```text
+quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+```
+
+in both `03-controller.yaml` and `04-node.yaml`. Because deployment uses Kustomize (`oc apply -k`), you do **not** need to edit those two manifests separately. The `images` entry in `kustomization.yaml` rewrites the matching CSI driver image in both the controller Deployment and node DaemonSet.
+
+If you choose to apply `03-controller.yaml` or `04-node.yaml` directly with `oc apply -f` instead of using Kustomize, then you must replace the placeholder image in each manifest manually.
+
+Before deploying, render the manifests and verify that Kustomize replaced both CSI driver image references with the Quay image you pushed:
+
+```bash
+oc kustomize deploy/openshift | grep -E 'image:.*mikrotik-rds-csi'
+```
+
+For a `singlecheeze` repository, the rendered output should contain two CSI driver references similar to:
+
+```text
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
+```
+
+One is the controller container from `03-controller.yaml`; the other is the node-plugin container from `04-node.yaml`.
+
 ## 6. Deploy
 
 ```bash

@@ -10,5 +10,5 @@ resources:
   - 05-storageclass.yaml
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
-    newName: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newName: quay.io/singlecheeze/mikrotik-rds-csi
     newTag: 0.2.0
