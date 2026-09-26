@@ -820,27 +820,65 @@ MapVolume.MapPodDevice failed ... target ... is already mounted from /dev/sda4[/
 
 use driver version `0.2.2` or newer. The PVC and RouterOS disk do not need to be recreated; updating the CSI node DaemonSet is sufficient, after which kubelet can retry the raw block publish.
 
-## 8. Dynamic PVC test
+## 8. Dynamic PVC and benchmark test
 
-The test PVC and pod are created in the `nvme-test` namespace. Create the namespace first if it does not already exist. The following command is idempotent, so it is safe to run whether or not the namespace already exists:
+The benchmark workflow is now self-contained in `deploy/openshift/07-test-pod.yaml`. A single apply creates the `nvme-test` namespace if needed, dynamically provisions the disposable `rds-csi-test` raw-block PVC, creates the test ServiceAccount/RBAC, and starts the benchmark pod. You do **not** need to apply `06-test-pvc.yaml` first.
 
-```bash
-oc create namespace nvme-test \
-  --dry-run=client -o yaml | oc apply -f -
-```
+> **Warning:** this benchmark is destructive. The sequential and random write workloads overwrite the contents of the disposable `rds-csi-test` PVC. Do not change the manifest to point at a PVC containing data you need to preserve.
 
-Then create the test PVC and watch it bind:
+For the first run:
 
 ```bash
-oc apply -f deploy/openshift/06-test-pvc.yaml
+oc apply -f deploy/openshift/07-test-pod.yaml
 oc -n nvme-test get pvc rds-csi-test -w
 ```
 
-If you are using a deployment-specific manifest directory such as `deploy/openshift-lab-tailored`, apply the corresponding test manifest from that directory instead, for example:
+After the PVC binds, watch the benchmark pod and its logs:
 
 ```bash
-oc apply -f deploy/openshift-lab-tailored/06-test-pvc.yaml
+oc -n nvme-test get pod rds-csi-test -w
+oc -n nvme-test logs -f pod/rds-csi-test -c test
 ```
+
+If you are using a deployment-specific manifest directory such as `deploy/openshift-lab-tailored`, apply the corresponding combined benchmark manifest instead:
+
+```bash
+oc apply -f deploy/openshift-lab-tailored/07-test-pod.yaml
+```
+
+`06-test-pvc.yaml` remains in the repository only as an optional PVC-only manifest for cases where you want to test dynamic provisioning independently of the benchmark pod.
+
+### Rerunning the benchmark
+
+The PVC can be reused for another destructive run. Delete only the completed test pod, then reapply the manifest:
+
+```bash
+oc -n nvme-test delete pod rds-csi-test --ignore-not-found
+oc apply -f deploy/openshift/07-test-pod.yaml
+oc -n nvme-test logs -f pod/rds-csi-test -c test
+```
+
+If you want each benchmark run to exercise **fresh dynamic provisioning**, delete both the pod and PVC before reapplying:
+
+```bash
+oc -n nvme-test delete pod rds-csi-test --ignore-not-found
+oc -n nvme-test delete pvc rds-csi-test --ignore-not-found
+oc apply -f deploy/openshift/07-test-pod.yaml
+```
+
+With the StorageClass `reclaimPolicy: Delete`, deleting this test PVC also exercises the CSI `DeleteVolume` path and removes the corresponding managed RouterOS file-backed disk.
+
+### Benchmark container and kernel
+
+The test pod now uses the latest standard Red Hat UBI 10 image:
+
+```text
+registry.access.redhat.com/ubi10/ubi:latest
+```
+
+`imagePullPolicy: Always` is set so a new pod refreshes the `:latest` image. The pod installs `fio`, `fio-engine-libaio`, and `util-linux` from the UBI repositories before testing and verifies the `libaio` engine before issuing I/O.
+
+**Important kernel detail:** changing the container from CentOS Stream to UBI does not change the kernel used for NVMe/TCP. Containers share the OpenShift node's RHCOS kernel. NVMe/TCP kernel fixes and performance optimizations therefore come from the OpenShift/RHCOS node kernel and its `nvme_tcp` module; the UBI image provides the benchmark userspace (`fio`, libraries, shell, and utilities). The benchmark prints both the UBI release and `uname -r` at startup so the actual userspace/kernel combination is captured in the logs.
 
 A successful provision creates a RouterOS file disk whose path, NQN prefix, target address, target port, and NSID all come from the resolved ConfigMap/StorageClass configuration.
 
@@ -856,46 +894,18 @@ Provisioner logs:
 oc -n mikrotik-rds-csi logs deploy/mikrotik-rds-csi-controller -c csi-provisioner -f
 ```
 
-To exercise node publish after the PVC is `Bound`, deploy the test pod:
+The benchmark runs four workloads automatically:
 
-> **Warning:** `07-test-pod.yaml` performs destructive write benchmarks directly against the raw block PVC. Use it only with the disposable `rds-csi-test` PVC. Any existing data on that PVC will be overwritten.
-
-```bash
-oc -n nvme-test delete pod rds-csi-test --ignore-not-found
-oc apply -f deploy/openshift/07-test-pod.yaml
-oc -n nvme-test get pod rds-csi-test -w
-```
-
-Deleting the old test pod first is useful when rerunning the benchmark because Pod container commands, images, and volume-device definitions are immutable after creation. The PVC itself is not deleted by this command.
-
-If you are using a deployment-specific manifest directory, apply its corresponding `07-test-pod.yaml` instead.
-
-The test pod installs `fio`, the CentOS Stream 9 `fio-engine-libaio` package, and `util-linux`, verifies that the `libaio` engine is available, checks the raw block device, and then runs four benchmarks automatically:
-
-| Test | Workload | Block size | Queue depth | Duration / size |
-|---|---|---:|---:|---|
+| Test | Workload | Block size | Queue depth | Duration |
+|---|---|---:|---:|---:|
 | Sequential write | `write` | 1 MiB | 32 | 30 seconds |
 | Sequential read | `read` | 1 MiB | 32 | 30 seconds |
 | Random write | `randwrite` | 4 KiB | 32 | 30 seconds |
 | Random read | `randread` | 4 KiB | 32 | 30 seconds |
 
-All four workloads use `direct=1` and the Linux `libaio` I/O engine. Each workload runs for 30 seconds. The sequential tests are useful for throughput in MiB/s, while the 4 KiB random tests are useful for IOPS and latency.
+All four workloads use `direct=1` and the Linux `libaio` I/O engine. For the sequential tests, focus primarily on `BW`; for the random tests, `IOPS` and `clat`/latency percentiles are the most useful fields.
 
-On CentOS Stream 9, the `libaio` fio engine is packaged separately from the main `fio` RPM as `fio-engine-libaio`. If the pod reports `engine libaio not loadable` or that `/usr/lib64/fio/fio-libaio.so` is missing, make sure the test manifest installs `fio-engine-libaio` in addition to `fio`. The repository's `07-test-pod.yaml` includes this package and performs a preflight `fio --enghelp` check before starting the benchmarks.
-
-Follow the benchmark output with:
-
-```bash
-oc -n nvme-test logs -f pod/rds-csi-test -c test
-```
-
-The useful `fio` summary fields are:
-
-- `BW` for sequential throughput;
-- `IOPS` for random-I/O rate;
-- `clat` for completion latency, including average and percentile values.
-
-When the four tests finish, the pod remains running so the raw device can still be inspected. The individual `fio` outputs are also retained inside the pod as `/tmp/fio-seq-write.txt`, `/tmp/fio-seq-read.txt`, `/tmp/fio-rand-write.txt`, and `/tmp/fio-rand-read.txt`.
+When the four tests finish, the pod remains running for inspection. The individual fio outputs are retained inside the pod as `/tmp/fio-seq-write.txt`, `/tmp/fio-seq-read.txt`, `/tmp/fio-rand-write.txt`, and `/tmp/fio-rand-read.txt`.
 
 For example:
 

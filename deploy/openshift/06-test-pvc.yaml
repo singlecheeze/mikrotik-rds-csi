@@ -1,3 +1,5 @@
+# Optional PVC-only test manifest. The normal benchmark workflow creates this PVC
+# automatically from 07-test-pod.yaml.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

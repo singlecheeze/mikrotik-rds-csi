@@ -1,5 +1,29 @@
-# WARNING: This pod performs destructive fio write benchmarks against the raw
-# block PVC rds-csi-test. Use it only with a disposable test PVC.
+# WARNING: This manifest creates a disposable raw-block PVC and performs
+# destructive fio write benchmarks against it. Do not point it at a PVC that
+# contains data you need to preserve.
+#
+# The benchmark container uses the latest Red Hat UBI 10 userspace. Containers
+# share the OpenShift node's RHCOS kernel, so NVMe/TCP kernel behavior and
+# optimizations come from the node kernel rather than from the container image.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvme-test
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rds-csi-test
+  namespace: nvme-test
+spec:
+  storageClassName: mikrotik-rds-nvme
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Block
+  resources:
+    requests:
+      storage: 1Gi
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -41,8 +65,10 @@ spec:
   restartPolicy: Never
   containers:
     - name: test
-      # CentOS Stream 9 provides fio from its public AppStream repository.
-      image: quay.io/centos/centos:stream9
+      # Use the current Red Hat UBI 10 standard image for benchmark userspace.
+      # imagePullPolicy=Always ensures the :latest tag is refreshed on each run.
+      image: registry.access.redhat.com/ubi10/ubi:latest
+      imagePullPolicy: Always
       command: ["/bin/bash", "-c"]
       args:
         - |
@@ -52,10 +78,18 @@ spec:
           BENCHMARK_RUNTIME=30
           IO_DEPTH=32
 
-          echo "Installing fio and block-device utilities..."
+          echo "============================================================"
+          echo " Benchmark environment"
+          echo "============================================================"
+          cat /etc/redhat-release || true
+          echo "Kernel shared from OpenShift node: $(uname -r)"
+          echo
+
+          echo "Installing fio and block-device utilities from UBI repositories..."
           dnf -y --setopt=install_weak_deps=False install fio fio-engine-libaio util-linux
           dnf clean all
 
+          echo "fio version: $(fio --version)"
           echo "Verifying fio libaio engine..."
           if ! fio --enghelp 2>/dev/null | grep -qw libaio; then
             echo "fio libaio engine is not available after package installation." >&2
