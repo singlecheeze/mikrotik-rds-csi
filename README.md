@@ -870,15 +870,17 @@ With the StorageClass `reclaimPolicy: Delete`, deleting this test PVC also exerc
 
 ### Benchmark container and kernel
 
-The test pod now uses the latest standard Red Hat UBI 10 image:
+The benchmark pod uses:
 
 ```text
-registry.access.redhat.com/ubi10/ubi:latest
+quay.io/centos/centos:stream9
 ```
 
-`imagePullPolicy: Always` is set so a new pod refreshes the `:latest` image. The pod installs `fio`, `fio-engine-libaio`, and `util-linux` from the UBI repositories before testing and verifies the `libaio` engine before issuing I/O.
+CentOS Stream 9 is used intentionally for the benchmark userspace because its standard repositories provide both `fio` and the split `fio-engine-libaio` package required by the test. The pod installs those packages quietly at startup and only prints the package-manager output if installation fails.
 
-**Important kernel detail:** changing the container from CentOS Stream to UBI does not change the kernel used for NVMe/TCP. Containers share the OpenShift node's RHCOS kernel. NVMe/TCP kernel fixes and performance optimizations therefore come from the OpenShift/RHCOS node kernel and its `nvme_tcp` module; the UBI image provides the benchmark userspace (`fio`, libraries, shell, and utilities). The benchmark prints both the UBI release and `uname -r` at startup so the actual userspace/kernel combination is captured in the logs.
+The earlier UBI 10 test image was removed because the enabled UBI 10 repositories do not contain `fio`. More importantly, the container image does **not** determine the NVMe/TCP kernel implementation: containers share the OpenShift node's RHCOS kernel. NVMe/TCP fixes and performance optimizations therefore come from the node kernel and its `nvme_tcp` module, regardless of whether the benchmark userspace is UBI or CentOS Stream.
+
+The script uses `set -euo pipefail` rather than `set -x`, so the pod no longer prints a `+ <command>` trace for every shell command. Benchmark logs are intentionally compact: userspace version, node kernel, fio version, device size, and the four fio result sections.
 
 A successful provision creates a RouterOS file disk whose path, NQN prefix, target address, target port, and NSID all come from the resolved ConfigMap/StorageClass configuration.
 

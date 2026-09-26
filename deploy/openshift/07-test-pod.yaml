@@ -2,8 +2,9 @@
 # destructive fio write benchmarks against it. Do not point it at a PVC that
 # contains data you need to preserve.
 #
-# The benchmark container uses the latest Red Hat UBI 10 userspace. Containers
-# share the OpenShift node's RHCOS kernel, so NVMe/TCP kernel behavior and
+# The benchmark container uses CentOS Stream 9 userspace because fio and the
+# libaio engine are available from its standard repositories. The container
+# shares the OpenShift node's RHCOS kernel, so NVMe/TCP kernel behavior and
 # optimizations come from the node kernel rather than from the container image.
 apiVersion: v1
 kind: Namespace
@@ -65,156 +66,100 @@ spec:
   restartPolicy: Never
   containers:
     - name: test
-      # Use the current Red Hat UBI 10 standard image for benchmark userspace.
-      # imagePullPolicy=Always ensures the :latest tag is refreshed on each run.
-      image: registry.access.redhat.com/ubi10/ubi:latest
+      image: quay.io/centos/centos:stream9
       imagePullPolicy: Always
       command: ["/bin/bash", "-c"]
       args:
         - |
-          set -euxo pipefail
+          set -euo pipefail
 
           DEVICE=/dev/rds-test
           BENCHMARK_RUNTIME=30
           IO_DEPTH=32
 
-          echo "============================================================"
-          echo " Benchmark environment"
-          echo "============================================================"
-          cat /etc/redhat-release || true
-          echo "Kernel shared from OpenShift node: $(uname -r)"
-          echo
-
-          echo "Installing fio and block-device utilities from UBI repositories..."
-          dnf -y --setopt=install_weak_deps=False install fio fio-engine-libaio util-linux
-          dnf clean all
-
-          echo "fio version: $(fio --version)"
-          echo "Verifying fio libaio engine..."
-          if ! fio --enghelp 2>/dev/null | grep -qw libaio; then
-            echo "fio libaio engine is not available after package installation." >&2
+          printf 'Installing benchmark tools...\n'
+          if ! dnf -y -q --setopt=install_weak_deps=False install \
+              fio fio-engine-libaio util-linux \
+              >/tmp/dnf-install.log 2>&1; then
+            cat /tmp/dnf-install.log >&2
             exit 1
           fi
+          dnf -q clean all >/dev/null 2>&1 || true
 
-          echo
-          echo "============================================================"
-          echo " Raw block device"
-          echo "============================================================"
-          ls -l "${DEVICE}"
+          if ! fio --enghelp 2>/dev/null | grep -qw libaio; then
+            printf 'ERROR: fio libaio engine is unavailable.\n' >&2
+            exit 1
+          fi
 
           SIZE_BYTES="$(blockdev --getsize64 "${DEVICE}")"
           SEQ_SIZE_BYTES="$((SIZE_BYTES / 1048576 * 1048576))"
           RAND_SIZE_BYTES="$((SIZE_BYTES / 4096 * 4096))"
 
-          echo "Device size: ${SIZE_BYTES} bytes"
-          echo "Sequential test size: ${SEQ_SIZE_BYTES} bytes"
-          echo "Random test address space: ${RAND_SIZE_BYTES} bytes"
-          echo "Benchmark runtime: ${BENCHMARK_RUNTIME} seconds per workload"
-          echo "I/O depth: ${IO_DEPTH}"
+          printf 'Userspace: %s\n' "$(cat /etc/redhat-release)"
+          printf 'Kernel:    %s\n' "$(uname -r)"
+          printf 'fio:       %s\n' "$(fio --version)"
+          printf 'Device:    %s (%s bytes)\n' "${DEVICE}" "${SIZE_BYTES}"
+          printf 'Runtime:   %ss per workload, queue depth %s\n' "${BENCHMARK_RUNTIME}" "${IO_DEPTH}"
 
-          if (( SEQ_SIZE_BYTES < 1048576 )); then
-            echo "Device is too small for the 1 MiB sequential benchmark." >&2
+          if (( SEQ_SIZE_BYTES < 1048576 || RAND_SIZE_BYTES < 4096 )); then
+            printf 'ERROR: block device is too small for the benchmark.\n' >&2
             exit 1
           fi
 
-          if (( RAND_SIZE_BYTES < 4096 )); then
-            echo "Device is too small for the 4 KiB random benchmark." >&2
-            exit 1
-          fi
+          run_fio() {
+            local label="$1"
+            local outfile="$2"
+            shift 2
+            printf '\n=== %s ===\n' "${label}"
+            fio \
+              --filename="${DEVICE}" \
+              --allow_file_create=0 \
+              --ioengine=libaio \
+              --direct=1 \
+              --iodepth="${IO_DEPTH}" \
+              --numjobs=1 \
+              --time_based=1 \
+              --runtime="${BENCHMARK_RUNTIME}" \
+              --group_reporting \
+              --eta=never \
+              "$@" | tee "${outfile}"
+          }
 
-          echo
-          echo "============================================================"
-          echo " 1/4 Sequential WRITE - 1 MiB blocks"
-          echo "============================================================"
-          fio \
+          run_fio \
+            '1/4 Sequential WRITE - 1 MiB' \
+            /tmp/fio-seq-write.txt \
             --name=seq-write \
-            --filename="${DEVICE}" \
-            --allow_file_create=0 \
             --rw=write \
             --bs=1M \
-            --ioengine=libaio \
-            --direct=1 \
-            --iodepth="${IO_DEPTH}" \
-            --numjobs=1 \
             --size="${SEQ_SIZE_BYTES}" \
-            --time_based=1 \
-            --runtime="${BENCHMARK_RUNTIME}" \
-            --end_fsync=1 \
-            --group_reporting \
-            --eta=never \
-            | tee /tmp/fio-seq-write.txt
+            --end_fsync=1
 
-          echo
-          echo "============================================================"
-          echo " 2/4 Sequential READ - 1 MiB blocks"
-          echo "============================================================"
-          fio \
+          run_fio \
+            '2/4 Sequential READ - 1 MiB' \
+            /tmp/fio-seq-read.txt \
             --name=seq-read \
-            --filename="${DEVICE}" \
-            --allow_file_create=0 \
             --rw=read \
             --bs=1M \
-            --ioengine=libaio \
-            --direct=1 \
-            --iodepth="${IO_DEPTH}" \
-            --numjobs=1 \
-            --size="${SEQ_SIZE_BYTES}" \
-            --time_based=1 \
-            --runtime="${BENCHMARK_RUNTIME}" \
-            --group_reporting \
-            --eta=never \
-            | tee /tmp/fio-seq-read.txt
+            --size="${SEQ_SIZE_BYTES}"
 
-          echo
-          echo "============================================================"
-          echo " 3/4 Random WRITE - 4 KiB blocks, ${BENCHMARK_RUNTIME}s"
-          echo "============================================================"
-          fio \
+          run_fio \
+            '3/4 Random WRITE - 4 KiB' \
+            /tmp/fio-rand-write.txt \
             --name=rand-write \
-            --filename="${DEVICE}" \
-            --allow_file_create=0 \
             --rw=randwrite \
             --bs=4k \
-            --ioengine=libaio \
-            --direct=1 \
-            --iodepth="${IO_DEPTH}" \
-            --numjobs=1 \
             --size="${RAND_SIZE_BYTES}" \
-            --time_based=1 \
-            --runtime="${BENCHMARK_RUNTIME}" \
-            --end_fsync=1 \
-            --group_reporting \
-            --eta=never \
-            | tee /tmp/fio-rand-write.txt
+            --end_fsync=1
 
-          echo
-          echo "============================================================"
-          echo " 4/4 Random READ - 4 KiB blocks, ${BENCHMARK_RUNTIME}s"
-          echo "============================================================"
-          fio \
+          run_fio \
+            '4/4 Random READ - 4 KiB' \
+            /tmp/fio-rand-read.txt \
             --name=rand-read \
-            --filename="${DEVICE}" \
-            --allow_file_create=0 \
             --rw=randread \
             --bs=4k \
-            --ioengine=libaio \
-            --direct=1 \
-            --iodepth="${IO_DEPTH}" \
-            --numjobs=1 \
-            --size="${RAND_SIZE_BYTES}" \
-            --time_based=1 \
-            --runtime="${BENCHMARK_RUNTIME}" \
-            --group_reporting \
-            --eta=never \
-            | tee /tmp/fio-rand-read.txt
+            --size="${RAND_SIZE_BYTES}"
 
-          echo
-          echo "============================================================"
-          echo " fio benchmark complete"
-          echo "============================================================"
-          echo "Results are available in this pod's logs and under /tmp/fio-*.txt."
-          echo "The pod will remain running for manual inspection of the raw device."
-
+          printf '\nBenchmark complete. Results: /tmp/fio-*.txt\n'
           sleep infinity
       securityContext:
         privileged: true
