@@ -844,11 +844,49 @@ Provisioner logs:
 oc -n mikrotik-rds-csi logs deploy/mikrotik-rds-csi-controller -c csi-provisioner -f
 ```
 
-To exercise node publish after the PVC is `Bound`:
+To exercise node publish after the PVC is `Bound`, deploy the test pod:
+
+> **Warning:** `07-test-pod.yaml` performs destructive write benchmarks directly against the raw block PVC. Use it only with the disposable `rds-csi-test` PVC. Any existing data on that PVC will be overwritten.
 
 ```bash
+oc -n nvme-test delete pod rds-csi-test --ignore-not-found
 oc apply -f deploy/openshift/07-test-pod.yaml
 oc -n nvme-test get pod rds-csi-test -w
+```
+
+Deleting the old test pod first is useful when rerunning the benchmark because Pod container commands, images, and volume-device definitions are immutable after creation. The PVC itself is not deleted by this command.
+
+If you are using a deployment-specific manifest directory, apply its corresponding `07-test-pod.yaml` instead.
+
+The test pod installs `fio`, verifies the raw block device, and then runs four benchmarks automatically:
+
+| Test | Workload | Block size | Queue depth | Duration / size |
+|---|---|---:|---:|---|
+| Sequential write | `write` | 1 MiB | 32 | 30 seconds |
+| Sequential read | `read` | 1 MiB | 32 | 30 seconds |
+| Random write | `randwrite` | 4 KiB | 32 | 30 seconds |
+| Random read | `randread` | 4 KiB | 32 | 30 seconds |
+
+All four workloads use `direct=1` and the Linux `libaio` I/O engine. Each workload runs for 30 seconds. The sequential tests are useful for throughput in MiB/s, while the 4 KiB random tests are useful for IOPS and latency.
+
+Follow the benchmark output with:
+
+```bash
+oc -n nvme-test logs -f pod/rds-csi-test -c test
+```
+
+The useful `fio` summary fields are:
+
+- `BW` for sequential throughput;
+- `IOPS` for random-I/O rate;
+- `clat` for completion latency, including average and percentile values.
+
+When the four tests finish, the pod remains running so the raw device can still be inspected. The individual `fio` outputs are also retained inside the pod as `/tmp/fio-seq-write.txt`, `/tmp/fio-seq-read.txt`, `/tmp/fio-rand-write.txt`, and `/tmp/fio-rand-read.txt`.
+
+For example:
+
+```bash
+oc -n nvme-test exec rds-csi-test -c test -- cat /tmp/fio-rand-read.txt
 ```
 
 ## Delete behavior and safety
