@@ -1,4 +1,4 @@
-IMAGE ?= quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+IMAGE ?= quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.1
 
 .PHONY: generate test build
 

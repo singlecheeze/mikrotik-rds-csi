@@ -697,7 +697,7 @@ Quay image references use the registry form `quay.io/<namespace>/<repository>:<t
 For example, if the Quay namespace is `singlecheeze`, use:
 
 ```text
-quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
+quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
 ```
 
 Authenticate to Quay before pushing:
@@ -709,7 +709,7 @@ podman login quay.io
 Use your Quay username/password or a robot account/token that has write access to the repository. Then build and push:
 
 ```bash
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
 podman build -f Containerfile -t "${IMAGE}" .
 podman push "${IMAGE}"
 ```
@@ -724,10 +724,10 @@ If an image was already built with the incorrect `/repository/` path, it does no
 
 ```bash
 podman tag \
-  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.0 \
-  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
+  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.1 \
+  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
 
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.0
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
 podman push "${IMAGE}"
 ```
 
@@ -739,13 +739,13 @@ Update `deploy/openshift/kustomization.yaml`:
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
     newName: quay.io/YOUR_USER/mikrotik-rds-csi
-    newTag: 0.2.0
+    newTag: 0.2.1
 ```
 
 The base manifests intentionally keep the placeholder image:
 
 ```text
-quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.1
 ```
 
 in both `03-controller.yaml` and `04-node.yaml`. Because deployment uses Kustomize (`oc apply -k`), you do **not** need to edit those two manifests separately. The `images` entry in `kustomization.yaml` rewrites the matching CSI driver image in both the controller Deployment and node DaemonSet.
@@ -761,8 +761,8 @@ oc kustomize deploy/openshift | grep -E 'image:.*mikrotik-rds-csi'
 For a `singlecheeze` repository, the rendered output should contain two CSI driver references similar to:
 
 ```text
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.0
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
 ```
 
 One is the controller container from `03-controller.yaml`; the other is the node-plugin container from `04-node.yaml`.
@@ -853,6 +853,16 @@ oc -n nvme-test get pod rds-csi-test -w
 
 ## Delete behavior and safety
 
-RouterOS deletes the `/disk` object separately from its file-backed image. The driver therefore records the actual `file-path` from the RouterOS disk before deleting the export, removes the disk object, then removes that exact backing file. CSI volume IDs are deterministic `csi-<32 hex>` identifiers, and `DeleteVolume` refuses unmanaged IDs.
+RouterOS deletes the `/disk` object separately from its file-backed image. The driver therefore records the actual `file-path` from the RouterOS disk before deleting the export, removes the disk object, then removes that exact backing file.
+
+### RouterOS 32-character disk-slot limit
+
+RouterOS limits a disk `slot` name to **32 characters**. New CSI volume IDs therefore use `csi-` plus the first **28 hexadecimal characters** of a SHA-256 digest, for exactly 32 characters total:
+
+```text
+csi-0123456789abcdef0123456789ab
+```
+
+That retains 112 bits of deterministic hash space while ensuring every dynamically provisioned RouterOS disk `slot` is exactly 32 characters long. The managed-volume guard accepts only this `csi-` plus 28-hex-character format, and `DeleteVolume` refuses IDs outside it.
 
 This remains an experimental driver. Before production use, add CSI conformance/sanity testing, controller leader election/HA, stronger backend ownership metadata, failure-injection tests, node-reboot recovery tests, and snapshot/clone/expansion support as required.

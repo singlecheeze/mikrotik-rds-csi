@@ -111,11 +111,13 @@ class ControllerService(csi_pb2_grpc.ControllerServicer):
 
         settings = self._settings(request.parameters, context)
         volume_id = volume_id_from_name(request.name)
-        file_path = settings.file_path(volume_id)
-        nqn = nqn_for_volume(settings.nqn_prefix, volume_id)
 
         try:
             existing = self.rds.get_disk_by_slot(volume_id)
+
+            file_path = settings.file_path(volume_id)
+            nqn = nqn_for_volume(settings.nqn_prefix, volume_id)
+
             if existing:
                 existing_size = int(existing.get("file-size", existing.get("size", 0)) or 0)
                 if existing_size < size:

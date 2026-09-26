@@ -16,7 +16,7 @@ spec:
       serviceAccountName: mikrotik-rds-csi-controller
       containers:
         - name: csi-driver
-          image: quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.0
+          image: quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.1
           imagePullPolicy: Always
           args:
             - --mode=controller
