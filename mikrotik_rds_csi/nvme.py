@@ -190,12 +190,12 @@ def disconnect(nqn: str) -> None:
 
 
 def is_mountpoint(path: str) -> bool:
-    result = _run(["findmnt", "-rn", "--target", path], check=False)
+    result = _run(["findmnt", "-rn", "--mountpoint", path], check=False)
     return result.returncode == 0
 
 
 def mounted_source(path: str) -> str | None:
-    result = _run(["findmnt", "-rn", "-o", "SOURCE", "--target", path], check=False)
+    result = _run(["findmnt", "-rn", "-o", "SOURCE", "--mountpoint", path], check=False)
     if result.returncode != 0:
         return None
     value = result.stdout.strip().splitlines()

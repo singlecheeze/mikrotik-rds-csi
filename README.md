@@ -697,7 +697,7 @@ Quay image references use the registry form `quay.io/<namespace>/<repository>:<t
 For example, if the Quay namespace is `singlecheeze`, use:
 
 ```text
-quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
+quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
 ```
 
 Authenticate to Quay before pushing:
@@ -709,7 +709,7 @@ podman login quay.io
 Use your Quay username/password or a robot account/token that has write access to the repository. Then build and push:
 
 ```bash
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
 podman build -f Containerfile -t "${IMAGE}" .
 podman push "${IMAGE}"
 ```
@@ -724,10 +724,10 @@ If an image was already built with the incorrect `/repository/` path, it does no
 
 ```bash
 podman tag \
-  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.1 \
-  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
+  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.2 \
+  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
 
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.1
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
 podman push "${IMAGE}"
 ```
 
@@ -739,13 +739,13 @@ Update `deploy/openshift/kustomization.yaml`:
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
     newName: quay.io/YOUR_USER/mikrotik-rds-csi
-    newTag: 0.2.1
+    newTag: 0.2.2
 ```
 
 The base manifests intentionally keep the placeholder image:
 
 ```text
-quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.1
+quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.2
 ```
 
 in both `03-controller.yaml` and `04-node.yaml`. Because deployment uses Kustomize (`oc apply -k`), you do **not** need to edit those two manifests separately. The `images` entry in `kustomization.yaml` rewrites the matching CSI driver image in both the controller Deployment and node DaemonSet.
@@ -761,8 +761,8 @@ oc kustomize deploy/openshift | grep -E 'image:.*mikrotik-rds-csi'
 For a `singlecheeze` repository, the rendered output should contain two CSI driver references similar to:
 
 ```text
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.1
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
 ```
 
 One is the controller container from `03-controller.yaml`; the other is the node-plugin container from `04-node.yaml`.
@@ -807,6 +807,18 @@ oc patch storageprofile mikrotik-rds-nvme --type=merge -p '
   }
 }'
 ```
+
+### Raw block publish on RHCOS
+
+The node plugin bind-publishes each NVMe namespace onto the exact kubelet CSI raw-block target file. The driver therefore checks that exact target with `findmnt --mountpoint`; it must not use `findmnt --target`, because `--target` returns the filesystem that merely contains the path (for example the RHCOS `/var/lib/kubelet` filesystem) and can incorrectly report that an unpublished target is already mounted.
+
+If kubelet reports an error similar to:
+
+```text
+MapVolume.MapPodDevice failed ... target ... is already mounted from /dev/sda4[/ostree/deploy/rhcos/var/lib/kubelet]
+```
+
+use driver version `0.2.2` or newer. The PVC and RouterOS disk do not need to be recreated; updating the CSI node DaemonSet is sufficient, after which kubelet can retry the raw block publish.
 
 ## 8. Dynamic PVC test
 
