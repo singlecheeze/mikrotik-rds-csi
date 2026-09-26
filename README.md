@@ -870,7 +870,7 @@ Deleting the old test pod first is useful when rerunning the benchmark because P
 
 If you are using a deployment-specific manifest directory, apply its corresponding `07-test-pod.yaml` instead.
 
-The test pod installs `fio`, verifies the raw block device, and then runs four benchmarks automatically:
+The test pod installs `fio`, the CentOS Stream 9 `fio-engine-libaio` package, and `util-linux`, verifies that the `libaio` engine is available, checks the raw block device, and then runs four benchmarks automatically:
 
 | Test | Workload | Block size | Queue depth | Duration / size |
 |---|---|---:|---:|---|
@@ -880,6 +880,8 @@ The test pod installs `fio`, verifies the raw block device, and then runs four b
 | Random read | `randread` | 4 KiB | 32 | 30 seconds |
 
 All four workloads use `direct=1` and the Linux `libaio` I/O engine. Each workload runs for 30 seconds. The sequential tests are useful for throughput in MiB/s, while the 4 KiB random tests are useful for IOPS and latency.
+
+On CentOS Stream 9, the `libaio` fio engine is packaged separately from the main `fio` RPM as `fio-engine-libaio`. If the pod reports `engine libaio not loadable` or that `/usr/lib64/fio/fio-libaio.so` is missing, make sure the test manifest installs `fio-engine-libaio` in addition to `fio`. The repository's `07-test-pod.yaml` includes this package and performs a preflight `fio --enghelp` check before starting the benchmarks.
 
 Follow the benchmark output with:
 

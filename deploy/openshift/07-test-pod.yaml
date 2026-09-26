@@ -53,8 +53,14 @@ spec:
           IO_DEPTH=32
 
           echo "Installing fio and block-device utilities..."
-          dnf -y --setopt=install_weak_deps=False install fio util-linux
+          dnf -y --setopt=install_weak_deps=False install fio fio-engine-libaio util-linux
           dnf clean all
+
+          echo "Verifying fio libaio engine..."
+          if ! fio --enghelp 2>/dev/null | grep -qw libaio; then
+            echo "fio libaio engine is not available after package installation." >&2
+            exit 1
+          fi
 
           echo
           echo "============================================================"
