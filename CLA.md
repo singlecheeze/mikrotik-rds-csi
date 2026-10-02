@@ -131,7 +131,7 @@ If You do not agree to these terms, do not submit material intended for inclusio
 Questions regarding this Contributor License Agreement may be directed to:
 
 **David Thomas**  
-**linkedin.com/in/pynut**  
+**[`linkedin.com/in/pynut`](linkedin.com/in/pynut)**  
 
 ---
 

@@ -970,7 +970,7 @@ Commercial licenses can include rights for production deployment, OEM integratio
 For commercial licensing inquiries, contact:
 
 **David Thomas**  
-**linkedin.com/in/pynut**
+**[`linkedin.com/in/pynut`](linkedin.com/in/pynut)**  
 
 If you are unsure whether your use is permitted under the Community License, contact us before deploying the software.
 
