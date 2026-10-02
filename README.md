@@ -930,3 +930,62 @@ csi-0123456789abcdef0123456789ab
 That retains 112 bits of deterministic hash space while ensuring every dynamically provisioned RouterOS disk `slot` is exactly 32 characters long. The managed-volume guard accepts only this `csi-` plus 28-hex-character format, and `DeleteVolume` refuses IDs outside it.
 
 This remains an experimental driver. Before production use, add CSI conformance/sanity testing, controller leader election/HA, stronger backend ownership metadata, failure-injection tests, node-reboot recovery tests, and snapshot/clone/expansion support as required.
+  
+## Licensing
+
+The MikroTik RDS CSI Driver is distributed under a **dual-license model**.
+
+### Community License
+
+The source code is available for uses permitted by the:
+
+**PolyForm Noncommercial License 1.0.0**
+
+https://polyformproject.org/licenses/noncommercial/1.0.0
+
+The Community License permits use, modification, and distribution for purposes permitted by the PolyForm Noncommercial License.
+
+Examples of permitted uses include qualifying personal, educational, research, charitable, governmental, and other noncommercial uses as defined by the PolyForm license.
+
+See the [`LICENSE.md`](LICENSE) file for additional information.
+
+### Commercial License
+
+Use that is not permitted by the PolyForm Noncommercial License requires a separate commercial license from the Project Owner.
+
+A commercial license may be required for activities such as:
+
+- Production use within a commercial organization
+- Integration with commercial storage products
+- OEM hardware or software offerings
+- Commercial OpenShift or Kubernetes solutions
+- Managed storage services
+- SaaS or hosted services
+- Commercial redistribution
+- Products or services incorporating the CSI driver
+- Commercial support offerings that distribute or incorporate the software
+
+Commercial licenses can include rights for production deployment, OEM integration, redistribution, support, maintenance, and other commercial requirements.
+
+For commercial licensing inquiries, contact:
+
+**David Thomas**  
+**linkedin.com/in/pynut**
+
+If you are unsure whether your use is permitted under the Community License, contact us before deploying the software.
+
+### Contributions
+
+Contributions are welcome.
+
+Contributors must agree to the project's [`CLA.md`](CLA.md).
+
+The Contributor License Agreement allows contributors to retain ownership of their contributions while granting the Project Owner sufficient rights to:
+
+- Include contributions in the community project;
+- Continue distributing the Project under the Community License; and
+- License the complete Project under separate commercial or OEM licenses.
+
+### Third-Party Software
+
+Dependencies and other third-party components remain subject to their respective licenses. The Project's dual-license terms do not replace or modify licenses applicable to third-party software.
