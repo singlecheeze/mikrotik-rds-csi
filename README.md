@@ -947,7 +947,7 @@ The Community License permits use, modification, and distribution for purposes p
 
 Examples of permitted uses include qualifying personal, educational, research, charitable, governmental, and other noncommercial uses as defined by the PolyForm license.
 
-See the [`LICENSE.md`](LICENSE) file for additional information.
+See the [`LICENSE.md`](LICENSE.md) file for additional information.
 
 ### Commercial License
 
