@@ -59,7 +59,7 @@ Commercial licenses may include rights for:
 For commercial licensing inquiries, contact:
 
 **David Thomas**  
-**[`linkedin.com/in/pynut`](linkedin.com/in/pynut)**  
+**[linkedin.com/in/pynut](linkedin.com/in/pynut)**  
 
 ## Contributions
 
