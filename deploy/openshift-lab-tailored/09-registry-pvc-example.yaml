@@ -1,0 +1,16 @@
+# Example RWO Filesystem PVC for the OpenShift internal image registry.
+# This file is intentionally NOT included in kustomization.yaml.
+# Review the requested size before applying it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: image-registry-rds
+  namespace: openshift-image-registry
+spec:
+  storageClassName: mikrotik-rds-nvme
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 500Gi

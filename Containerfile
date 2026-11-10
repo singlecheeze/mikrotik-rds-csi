@@ -24,6 +24,7 @@ RUN apt-get update \
        kmod \
        nvme-cli \
        util-linux \
+       xfsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /wheels /wheels

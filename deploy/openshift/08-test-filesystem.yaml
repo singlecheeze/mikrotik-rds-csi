@@ -1,0 +1,55 @@
+# Optional filesystem-mode test. This file is intentionally NOT included in
+# kustomization.yaml. Apply it only after the CSI driver is running.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvme-test
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: rds-csi-fs-test
+  namespace: nvme-test
+spec:
+  storageClassName: mikrotik-rds-nvme
+  accessModes:
+    - ReadWriteOnce
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rds-csi-fs-test
+  namespace: nvme-test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -eu
+          echo "Filesystem mount is available at /data"
+          df -hT /data
+          mount | grep ' /data ' || true
+          if [ -f /data/persistence-marker ]; then
+            echo "Existing persistence marker:"
+            cat /data/persistence-marker
+          else
+            date -u > /data/persistence-marker
+            sync
+            echo "Created persistence marker:"
+            cat /data/persistence-marker
+          fi
+          sleep infinity
+      volumeMounts:
+        - name: disk
+          mountPath: /data
+  volumes:
+    - name: disk
+      persistentVolumeClaim:
+        claimName: rds-csi-fs-test

@@ -1,6 +1,6 @@
 # mikrotik-rds-csi
 
-Experimental Python CSI driver for dynamically provisioning raw block storage from a MikroTik RDS / ROSE Data Server. The controller creates file-backed RouterOS disk objects through the RouterOS REST API, exports them with NVMe/TCP, and the node plugin connects those namespaces directly with the Linux `nvme_tcp` initiator.
+Experimental Python CSI driver for dynamically provisioning raw block and XFS filesystem storage from a MikroTik RDS / ROSE Data Server. The controller creates file-backed RouterOS disk objects through the RouterOS REST API, exports them with NVMe/TCP, and the node plugin connects those namespaces directly with the Linux `nvme_tcp` initiator.
 
 The driver does **not** assume a particular RAID name, RDS management IP, NVMe/TCP target IP, network interface, NQN prefix, or backing-file path. Deployment-specific values live in a ConfigMap, and most per-volume backend settings can also be overridden by StorageClass parameters.
 
@@ -8,13 +8,13 @@ The driver does **not** assume a particular RAID name, RDS management IP, NVMe/T
 
 - dynamic `CreateVolume` and `DeleteVolume`
 - real `GetCapacity` from the configured RDS pool
-- raw `Block` PVCs
+- raw `Block` PVCs and `Filesystem` PVCs formatted as XFS
 - `ReadWriteOnce` / CSI `SINGLE_NODE_WRITER`
 - NVMe/TCP connect/disconnect on OpenShift nodes
 - configurable TLS verification and custom CA
 - configurable pool validation, capacity reserve, NQN, NSID, port, file extension, route-source behavior, reconnect timers, and optional interface enforcement
 - no CSI controller attach step (`attachRequired: false`)
-- no snapshots, clones, filesystem-mode PVCs, or expansion yet
+- no snapshots, clones, or expansion yet
 
 ## Architecture
 
@@ -46,7 +46,8 @@ Python CSI node DaemonSet
   +-- optionally enforce a configured interface
   +-- nvme connect -> targetAddress:targetPort
   +-- resolve NQN + NSID -> /dev/nvmeXnY
-  +-- bind-publish raw block device into kubelet target path
+  +-- Block PVC: bind-publish raw device into kubelet target path
+  +-- Filesystem PVC: safely detect/create XFS, then mount it
   |
   v
 NVMe/TCP data path -> MikroTik RDS
@@ -118,6 +119,26 @@ parameters:
 ```
 
 Any omitted parameter falls back to the ConfigMap/environment default. The RouterOS management endpoint and credentials are controller-wide in this release.
+
+### Block and filesystem PVCs
+
+The same `mikrotik-rds-nvme` StorageClass can provision either mode. It sets the CSI-reserved `csi.storage.k8s.io/fstype: xfs` parameter; the external provisioner uses that value for `Filesystem` PVCs and ignores it for raw `Block` PVCs. Kubernetes then selects the CSI capability from the PVC:
+
+```yaml
+# Raw device, for example a VM disk
+volumeMode: Block
+```
+
+or:
+
+```yaml
+# Mounted filesystem, for example the OpenShift image registry
+volumeMode: Filesystem
+```
+
+Filesystem mode currently supports **XFS only**. If Kubernetes leaves the filesystem type empty, the node plugin defaults it to `xfs`. On first publish the driver probes the NVMe namespace with `blkid`. It runs `mkfs.xfs` only when the namespace is completely signature-free. An existing XFS filesystem is mounted as-is, including after a node or cluster reboot. If the device contains another filesystem or any other recognizable block signature, the driver refuses to format it. The driver never uses `mkfs.xfs -f`.
+
+The runtime image includes `xfsprogs` for `mkfs.xfs`; `util-linux` supplies `blkid`, `mount`, `umount`, `findmnt`, and `blockdev`. The `CSIDriver` manifest sets `fsGroupPolicy: ReadWriteOnceWithFSType`, so kubelet can apply pod `fsGroup` ownership to mounted RWO filesystem volumes when required by workloads such as the image registry.
 
 ## Optional RouterOS storage preparation and maintenance scripts
 
@@ -697,7 +718,7 @@ Quay image references use the registry form `quay.io/<namespace>/<repository>:<t
 For example, if the Quay namespace is `singlecheeze`, use:
 
 ```text
-quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
+quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
 ```
 
 Authenticate to Quay before pushing:
@@ -709,7 +730,7 @@ podman login quay.io
 Use your Quay username/password or a robot account/token that has write access to the repository. Then build and push:
 
 ```bash
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
 podman build -f Containerfile -t "${IMAGE}" .
 podman push "${IMAGE}"
 ```
@@ -724,10 +745,10 @@ If an image was already built with the incorrect `/repository/` path, it does no
 
 ```bash
 podman tag \
-  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.2.2 \
-  quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
+  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.3.0 \
+  quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
 
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.2.2
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
 podman push "${IMAGE}"
 ```
 
@@ -739,13 +760,13 @@ Update `deploy/openshift/kustomization.yaml`:
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
     newName: quay.io/YOUR_USER/mikrotik-rds-csi
-    newTag: 0.2.2
+    newTag: 0.3.0
 ```
 
 The base manifests intentionally keep the placeholder image:
 
 ```text
-quay.io/REPLACE_ME/mikrotik-rds-csi:0.2.2
+quay.io/REPLACE_ME/mikrotik-rds-csi:0.3.0
 ```
 
 in both `03-controller.yaml` and `04-node.yaml`. Because deployment uses Kustomize (`oc apply -k`), you do **not** need to edit those two manifests separately. The `images` entry in `kustomization.yaml` rewrites the matching CSI driver image in both the controller Deployment and node DaemonSet.
@@ -761,8 +782,8 @@ oc kustomize deploy/openshift | grep -E 'image:.*mikrotik-rds-csi'
 For a `singlecheeze` repository, the rendered output should contain two CSI driver references similar to:
 
 ```text
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.2.2
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
 ```
 
 One is the controller container from `03-controller.yaml`; the other is the node-plugin container from `04-node.yaml`.
@@ -820,7 +841,63 @@ MapVolume.MapPodDevice failed ... target ... is already mounted from /dev/sda4[/
 
 use driver version `0.2.2` or newer. The PVC and RouterOS disk do not need to be recreated; updating the CSI node DaemonSet is sufficient, after which kubelet can retry the raw block publish.
 
-## 8. Dynamic PVC and benchmark test
+## 8. Filesystem PVC test
+
+Driver version `0.3.0` adds XFS filesystem-mode publishing while retaining the existing raw-block path. Before moving an application such as the internal image registry, validate filesystem provisioning with the optional test manifest:
+
+```bash
+oc apply -f deploy/openshift/08-test-filesystem.yaml
+oc -n nvme-test get pvc rds-csi-fs-test -w
+oc -n nvme-test get pod rds-csi-fs-test -w
+oc -n nvme-test logs pod/rds-csi-fs-test
+```
+
+The pod mounts the PVC at `/data`, creates `/data/persistence-marker` on the first run, and then sleeps. To verify reboot/remount persistence without deleting the PVC, delete only the pod and reapply the manifest:
+
+```bash
+oc -n nvme-test delete pod rds-csi-fs-test --ignore-not-found
+oc apply -f deploy/openshift/08-test-filesystem.yaml
+oc -n nvme-test logs pod/rds-csi-fs-test
+```
+
+The second pod should report the existing marker. This exercises the important recovery path: reconnect the existing NVMe/TCP namespace, detect the existing XFS filesystem, and mount it **without formatting it again**.
+
+## 9. OpenShift internal image registry on an RDS filesystem PVC
+
+The image registry must consume the RDS volume as `volumeMode: Filesystem`; a raw `Block` PVC cannot be used with the registry Deployment's `volumeMounts`. The repository includes `deploy/openshift/09-registry-pvc-example.yaml` as a 500 GiB example. It is intentionally not part of the main Kustomize deployment.
+
+> **Important:** `volumeMode` cannot be changed in place on an existing bound PVC. Do not delete a current registry PVC until you have decided how to preserve any data you need. If its PV uses reclaim policy `Delete`, consider patching the PV to `Retain` before making destructive changes.
+
+Create a new filesystem claim after reviewing its requested size:
+
+```bash
+oc apply -f deploy/openshift/09-registry-pvc-example.yaml
+oc -n openshift-image-registry get pvc image-registry-rds -w
+```
+
+Because this StorageClass is `ReadWriteOnce`, run a single registry replica with `Recreate` rollout strategy, then point the Image Registry Operator at the new claim:
+
+```bash
+oc patch configs.imageregistry.operator.openshift.io/cluster \
+  --type=merge \
+  -p '{"spec":{"replicas":1,"rolloutStrategy":"Recreate"}}'
+
+oc patch configs.imageregistry.operator.openshift.io/cluster \
+  --type=merge \
+  -p '{"spec":{"storage":{"pvc":{"claim":"image-registry-rds"}}}}'
+```
+
+Verify the registry and the filesystem claim:
+
+```bash
+oc -n openshift-image-registry get pods -o wide
+oc -n openshift-image-registry get pvc image-registry-rds
+oc get configs.imageregistry.operator.openshift.io/cluster -o yaml
+```
+
+On a later node or cluster reboot, the CSI node plugin reconnects the NQN, finds the existing XFS signature, and mounts the filesystem as-is. A non-XFS or otherwise pre-signed namespace causes a hard failure rather than an automatic format.
+
+## 10. Dynamic PVC and benchmark test
 
 The benchmark workflow is now self-contained in `deploy/openshift/07-test-pod.yaml`. A single apply creates the `nvme-test` namespace if needed, dynamically provisions the disposable `rds-csi-test` raw-block PVC, creates the test ServiceAccount/RBAC, and starts the benchmark pod. You do **not** need to apply `06-test-pvc.yaml` first.
 
@@ -930,62 +1007,3 @@ csi-0123456789abcdef0123456789ab
 That retains 112 bits of deterministic hash space while ensuring every dynamically provisioned RouterOS disk `slot` is exactly 32 characters long. The managed-volume guard accepts only this `csi-` plus 28-hex-character format, and `DeleteVolume` refuses IDs outside it.
 
 This remains an experimental driver. Before production use, add CSI conformance/sanity testing, controller leader election/HA, stronger backend ownership metadata, failure-injection tests, node-reboot recovery tests, and snapshot/clone/expansion support as required.
-  
-## Licensing
-
-The MikroTik RDS CSI Driver is distributed under a **dual-license model**.
-
-### Community License
-
-The source code is available for uses permitted by the:
-
-**PolyForm Noncommercial License 1.0.0**
-
-https://polyformproject.org/licenses/noncommercial/1.0.0
-
-The Community License permits use, modification, and distribution for purposes permitted by the PolyForm Noncommercial License.
-
-Examples of permitted uses include qualifying personal, educational, research, charitable, governmental, and other noncommercial uses as defined by the PolyForm license.
-
-See the [`LICENSE.md`](LICENSE.md) file for additional information.
-
-### Commercial License
-
-Use that is not permitted by the PolyForm Noncommercial License requires a separate commercial license from the Project Owner.
-
-A commercial license may be required for activities such as:
-
-- Production use within a commercial organization
-- Integration with commercial storage products
-- OEM hardware or software offerings
-- Commercial OpenShift or Kubernetes solutions
-- Managed storage services
-- SaaS or hosted services
-- Commercial redistribution
-- Products or services incorporating the CSI driver
-- Commercial support offerings that distribute or incorporate the software
-
-Commercial licenses can include rights for production deployment, OEM integration, redistribution, support, maintenance, and other commercial requirements.
-
-For commercial licensing inquiries, contact:
-
-**David Thomas**  
-**[https://www.linkedin.com/in/pynut](https://www.linkedin.com/in/pynut)**  
-
-If you are unsure whether your use is permitted under the Community License, contact us before deploying the software.
-
-### Contributions
-
-Contributions are welcome.
-
-Contributors must agree to the project's [`CLA.md`](CLA.md).
-
-The Contributor License Agreement allows contributors to retain ownership of their contributions while granting the Project Owner sufficient rights to:
-
-- Include contributions in the community project;
-- Continue distributing the Project under the Community License; and
-- License the complete Project under separate commercial or OEM licenses.
-
-### Third-Party Software
-
-Dependencies and other third-party components remain subject to their respective licenses. The Project's dual-license terms do not replace or modify licenses applicable to third-party software.

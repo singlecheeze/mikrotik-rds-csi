@@ -3,6 +3,7 @@ kind: CSIDriver
 metadata:
   name: rds.csi.mikrotik.com
 spec:
+  fsGroupPolicy: ReadWriteOnceWithFSType
   attachRequired: false
   podInfoOnMount: false
   volumeLifecycleModes:

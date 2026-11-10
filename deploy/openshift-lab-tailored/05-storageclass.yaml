@@ -3,7 +3,8 @@ kind: StorageClass
 metadata:
   name: mikrotik-rds-nvme
 provisioner: rds.csi.mikrotik.com
-parameters: {}
+parameters:
+  csi.storage.k8s.io/fstype: xfs
 # Any of these optional parameters override the controller ConfigMap defaults:
 #   poolSlot: "storage-pool"
 #   poolPath: "/storage-pool"

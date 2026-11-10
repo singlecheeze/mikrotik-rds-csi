@@ -13,12 +13,23 @@ SUPPORTED_ACCESS_MODES = {
 }
 
 
-def _is_supported_capability(capability) -> bool:
-    if not capability.HasField("block"):
-        return False
+def _capability_error(capability) -> str | None:
     if not capability.HasField("access_mode"):
-        return False
-    return capability.access_mode.mode in SUPPORTED_ACCESS_MODES
+        return "access_mode is required"
+    if capability.access_mode.mode not in SUPPORTED_ACCESS_MODES:
+        return "only SINGLE_NODE_WRITER is supported"
+    if capability.HasField("block"):
+        return None
+    if capability.HasField("mount"):
+        fs_type = (capability.mount.fs_type or "xfs").strip().lower()
+        if fs_type != "xfs":
+            return f"filesystem type {fs_type!r} is unsupported; use xfs"
+        return None
+    return "volume capability must specify block or mount"
+
+
+def _is_supported_capability(capability) -> bool:
+    return _capability_error(capability) is None
 
 
 def _requested_bytes(request) -> int:
@@ -101,7 +112,7 @@ class ControllerService(csi_pb2_grpc.ControllerServicer):
         if not all(_is_supported_capability(cap) for cap in request.volume_capabilities):
             context.abort(
                 grpc.StatusCode.INVALID_ARGUMENT,
-                "only raw Block volumes with SINGLE_NODE_WRITER are supported",
+                "only raw Block or XFS Filesystem volumes with SINGLE_NODE_WRITER are supported",
             )
 
         try:
@@ -243,7 +254,7 @@ class ControllerService(csi_pb2_grpc.ControllerServicer):
                 )
             )
         return csi_pb2.ValidateVolumeCapabilitiesResponse(
-            message="only raw Block volumes with SINGLE_NODE_WRITER are supported"
+            message="only raw Block or XFS Filesystem volumes with SINGLE_NODE_WRITER are supported"
         )
 
     def GetCapacity(self, request, context):

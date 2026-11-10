@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import grpc
 
@@ -13,6 +14,17 @@ SUPPORTED_ACCESS_MODES = {
 }
 
 
+def _volume_mode(capability) -> tuple[str, str, list[str]]:
+    if capability.HasField("block"):
+        return "block", "", []
+    if capability.HasField("mount"):
+        fs_type = (capability.mount.fs_type or "xfs").strip().lower()
+        if fs_type != "xfs":
+            raise ValueError(f"filesystem type {fs_type!r} is unsupported; use xfs")
+        return "mount", fs_type, list(capability.mount.mount_flags)
+    raise ValueError("volume_capability must specify block or mount")
+
+
 class NodeService(csi_pb2_grpc.NodeServicer):
     def __init__(self, config: NodeConfig) -> None:
         self.config = config
@@ -24,10 +36,13 @@ class NodeService(csi_pb2_grpc.NodeServicer):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "target_path is required")
         if not request.HasField("volume_capability"):
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "volume_capability is required")
-        if not request.volume_capability.HasField("block"):
-            context.abort(grpc.StatusCode.INVALID_ARGUMENT, "only raw Block volumes are supported")
         if request.volume_capability.access_mode.mode not in SUPPORTED_ACCESS_MODES:
             context.abort(grpc.StatusCode.INVALID_ARGUMENT, "unsupported access mode")
+
+        try:
+            volume_mode, fs_type, mount_flags = _volume_mode(request.volume_capability)
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
 
         target = request.volume_context.get("target")
         port = request.volume_context.get("port", "4420")
@@ -49,7 +64,18 @@ class NodeService(csi_pb2_grpc.NodeServicer):
                 ctrl_loss_tmo_seconds=self.config.ctrl_loss_tmo_seconds,
                 nvme_module=self.config.nvme_module,
             )
-            nvme.bind_publish(device, request.target_path, readonly=request.readonly)
+
+            if volume_mode == "block":
+                nvme.bind_publish(device, request.target_path, readonly=request.readonly)
+            else:
+                nvme.mount_publish(
+                    device,
+                    request.target_path,
+                    fs_type=fs_type,
+                    mount_flags=mount_flags,
+                    readonly=request.readonly,
+                )
+
             nvme.save_state(
                 self.config.state_dir,
                 request.volume_id,
@@ -59,6 +85,8 @@ class NodeService(csi_pb2_grpc.NodeServicer):
                     "port": int(port),
                     "nsid": int(nsid),
                     "device": device,
+                    "volume_mode": volume_mode,
+                    "fs_type": fs_type,
                 },
             )
             return csi_pb2.NodePublishVolumeResponse()
@@ -88,8 +116,8 @@ class NodeService(csi_pb2_grpc.NodeServicer):
             context.abort(grpc.StatusCode.INTERNAL, str(exc))
 
     def NodeGetCapabilities(self, request, context):
-        # No STAGE_UNSTAGE capability: this MVP connects and bind-publishes
-        # directly in NodePublishVolume.
+        # No STAGE_UNSTAGE capability: this driver connects and publishes
+        # directly in NodePublishVolume for both block and filesystem volumes.
         return csi_pb2.NodeGetCapabilitiesResponse(capabilities=[])
 
     def NodeGetInfo(self, request, context):
@@ -101,17 +129,27 @@ class NodeService(csi_pb2_grpc.NodeServicer):
         path = Path(request.volume_path)
         if not path.exists():
             context.abort(grpc.StatusCode.NOT_FOUND, f"volume path {request.volume_path} does not exist")
+
         try:
-            result = nvme._run(["blockdev", "--getsize64", request.volume_path])
-            total = int(result.stdout.strip())
-        except (nvme.NVMeError, ValueError) as exc:
+            if path.is_dir():
+                stats = os.statvfs(path)
+                total = stats.f_blocks * stats.f_frsize
+                available = stats.f_bavail * stats.f_frsize
+                used = total - (stats.f_bfree * stats.f_frsize)
+            else:
+                result = nvme._run(["blockdev", "--getsize64", request.volume_path])
+                total = int(result.stdout.strip())
+                available = total
+                used = 0
+        except (nvme.NVMeError, OSError, ValueError) as exc:
             context.abort(grpc.StatusCode.INTERNAL, str(exc))
+
         return csi_pb2.NodeGetVolumeStatsResponse(
             usage=[
                 csi_pb2.VolumeUsage(
                     total=total,
-                    available=total,
-                    used=0,
+                    available=available,
+                    used=used,
                     unit=csi_pb2.VolumeUsage.BYTES,
                 )
             ]

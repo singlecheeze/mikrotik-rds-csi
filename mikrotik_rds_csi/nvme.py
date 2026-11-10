@@ -207,6 +207,96 @@ def device_has_mounts(device: str) -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def probe_signature(device: str) -> dict[str, str]:
+    """Probe existing block signatures without modifying the device.
+
+    A completely blank namespace normally makes blkid return 2 with no output.
+    Any existing signature is preserved and evaluated before formatting.
+    """
+    result = _run(["blkid", "-p", "-o", "export", device], check=False)
+    if result.returncode not in (0, 2):
+        detail = (result.stderr or result.stdout or "").strip()
+        raise NVMeError(f"failed to probe filesystem signature on {device}: {detail or result.returncode}")
+
+    values: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def ensure_filesystem(device: str, fs_type: str = "xfs") -> bool:
+    """Ensure a filesystem exists; format only a signature-free namespace.
+
+    Returns True when this call created the filesystem, False when an existing
+    matching filesystem was reused. Any conflicting or unrecognized signature
+    is treated as data and causes a hard failure rather than a destructive mkfs.
+    """
+    requested = (fs_type or "xfs").strip().lower()
+    if requested != "xfs":
+        raise NVMeError(f"filesystem type {requested!r} is unsupported; use xfs")
+
+    signature = probe_signature(device)
+    existing = signature.get("TYPE", "").strip().lower()
+    if existing:
+        if existing != requested:
+            raise NVMeError(
+                f"refusing to format {device}: existing filesystem/signature type is {existing!r}, "
+                f"requested {requested!r}"
+            )
+        return False
+
+    if signature:
+        details = ", ".join(f"{key}={value}" for key, value in sorted(signature.items()))
+        raise NVMeError(
+            f"refusing to format {device}: existing block signature detected without a "
+            f"recognized filesystem ({details})"
+        )
+
+    _run(["mkfs.xfs", "-q", device])
+
+    verified = probe_signature(device).get("TYPE", "").strip().lower()
+    if verified != requested:
+        raise NVMeError(
+            f"mkfs.xfs completed for {device}, but filesystem verification returned {verified!r}"
+        )
+    return True
+
+
+def mount_publish(
+    device: str,
+    target_path: str,
+    *,
+    fs_type: str = "xfs",
+    mount_flags: list[str] | None = None,
+    readonly: bool = False,
+) -> None:
+    target = Path(target_path)
+    if target.exists() and not target.is_dir():
+        raise NVMeError(f"filesystem target {target_path} exists and is not a directory")
+    target.mkdir(parents=True, exist_ok=True)
+
+    if is_mountpoint(target_path):
+        source = mounted_source(target_path)
+        if source == device:
+            return
+        raise NVMeError(f"target {target_path} is already mounted from {source}")
+
+    ensure_filesystem(device, fs_type)
+
+    options = [flag for flag in (mount_flags or []) if flag]
+    if readonly and "ro" not in options:
+        options.append("ro")
+
+    args = ["mount", "-t", fs_type]
+    if options:
+        args.extend(["-o", ",".join(options)])
+    args.extend([device, target_path])
+    _run(args)
+
+
 def bind_publish(device: str, target_path: str, readonly: bool = False) -> None:
     target = Path(target_path)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -229,8 +319,12 @@ def unpublish(target_path: str) -> None:
     if is_mountpoint(target_path):
         _run(["umount", target_path])
     try:
-        if target.exists() and not target.is_dir():
+        if target.is_dir():
+            target.rmdir()
+        elif target.exists():
             target.unlink()
+    except FileNotFoundError:
+        pass
     except OSError as exc:
         raise NVMeError(f"failed to remove target path {target_path}: {exc}") from exc
 
