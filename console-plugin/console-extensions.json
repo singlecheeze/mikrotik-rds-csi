@@ -1,0 +1,22 @@
+[
+  {
+    "type": "console.page/route",
+    "properties": {
+      "exact": true,
+      "path": "/rds-csi",
+      "perspective": "admin",
+      "component": { "$codeRef": "RdsCsiPage" }
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "mikrotik-rds-csi",
+      "name": "MikroTik RDS CSI",
+      "href": "/rds-csi",
+      "perspective": "admin",
+      "section": "storage",
+      "startsWith": ["/rds-csi"]
+    }
+  }
+]

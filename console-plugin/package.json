@@ -1,0 +1,41 @@
+{
+  "name": "mikrotik-rds-csi-console",
+  "version": "0.4.0",
+  "description": "OpenShift console plugin for MikroTik RDS CSI health and connectivity",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "npm run clean && NODE_ENV=production webpack --config webpack.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@openshift-console/dynamic-plugin-sdk": "4.22-latest",
+    "@openshift-console/dynamic-plugin-sdk-webpack": "4.22-latest",
+    "@patternfly/react-core": "~6.4.3",
+    "@patternfly/react-icons": "~6.4.0",
+    "@patternfly/react-table": "~6.4.3",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "ts-loader": "^9.5.4",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "webpack": "^5.100.0",
+    "webpack-cli": "^6.0.1"
+  },
+  "consolePlugin": {
+    "name": "mikrotik-rds-csi-console",
+    "version": "0.4.0",
+    "displayName": "MikroTik RDS CSI",
+    "description": "Health, volume and NVMe/TCP connectivity views for the MikroTik RDS CSI driver.",
+    "exposedModules": {
+      "RdsCsiPage": "./components/RdsCsiPage"
+    },
+    "dependencies": {
+      "@console/pluginAPI": ">=4.22.0-0 <4.23.0-0"
+    }
+  }
+}
