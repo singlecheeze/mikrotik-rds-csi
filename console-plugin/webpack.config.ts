@@ -26,7 +26,12 @@ const config: Configuration = {
         exclude: /node_modules/,
         use: {
           loader: 'ts-loader',
-          options: { transpileOnly: false },
+          options: {
+            transpileOnly: false,
+            compilerOptions: {
+              noEmit: false,
+            },
+          },
         },
       },
     ],
