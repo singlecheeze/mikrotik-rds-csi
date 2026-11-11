@@ -5,3 +5,7 @@ __pycache__/
 proto/csi.proto
 mikrotik_rds_csi/generated/csi_pb2.py
 mikrotik_rds_csi/generated/csi_pb2_grpc.py
+
+# Console plugin build output
+console-plugin/node_modules/
+console-plugin/dist/

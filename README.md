@@ -14,7 +14,28 @@ The driver does **not** assume a particular RAID name, RDS management IP, NVMe/T
 - configurable TLS verification and custom CA
 - configurable pool validation, capacity reserve, NQN, NSID, port, file extension, route-source behavior, reconnect timers, and optional interface enforcement
 - no CSI controller attach step (`attachRequired: false`)
+- optional OpenShift 4.22 dynamic console plugin with read-only Kubernetes, RDS, and per-node NVMe/TCP diagnostics
+- node status reporter with route/source-IP, duplicate-IP, MTU, target reachability, and active-controller visibility
 - no snapshots, clones, or expansion yet
+
+### Current v0.4.0 behavior
+
+The storage path has been validated in the lab for both raw block and XFS filesystem workflows:
+
+- RouterOS 7.24.4 RDS REST provisioning and deletion
+- OpenShift 4.22 / Kubernetes 1.35
+- raw `Block` PVCs over NVMe/TCP
+- XFS `Filesystem` PVCs over NVMe/TCP
+- reconnecting an existing NVMe/TCP namespace and remounting its existing XFS filesystem after pod/node/cluster restart without reformatting
+- OpenShift internal image registry on a `ReadWriteOnce`, `Filesystem` RDS-backed PVC with one replica and `Recreate` rollout strategy
+- RouterOS disk slot names constrained to exactly 32 characters (`csi-` + 28 hex characters)
+- destructive fio benchmark coverage for sequential and random I/O on a disposable raw block PVC
+
+Version `0.4.0` additionally implements the console/status features below. Their Python behavior and manifest structure are covered by the repository tests/validation, but the new web-console bundle still requires deployment validation on an OpenShift 4.22 cluster:
+
+- OpenShift console overview for controller/node readiness, CSI registration, StorageClass, managed PV/PVCs, consumers, and recent warning events
+- read-only status API for RouterOS/pool health plus per-node route/source-IP/MTU/TCP/NVMe status
+- automatic duplicate storage source-IP detection across node reports
 
 ## Architecture
 
@@ -55,8 +76,10 @@ NVMe/TCP data path -> MikroTik RDS
 
 Python is only in the provisioning and attach control path. Application I/O flows through the Linux NVMe/TCP kernel stack directly to the RDS.
 
-## Versions used by this MVP
+## Current release and versions
 
+- driver release: 0.4.0
+- console plugin release: 0.4.0
 - OpenShift target: 4.22 / Kubernetes 1.35
 - CSI protobuf: v1.12.0
 - Python: 3.10+ (Python 3.11 is used by the Containerfile and recommended for RHEL 9 development)
@@ -99,6 +122,19 @@ The **Lab example** column shows the values used or directly validated in the de
 
 For backward compatibility, `RDS_STORAGE_TARGET` and `RDS_STORAGE_PORT` are accepted as aliases for `RDS_NVME_TARGET_ADDRESS` and `RDS_NVME_TARGET_PORT`.
 
+The optional console/status components add these settings. They do not affect CSI I/O when the console overlay is not installed.
+
+| Environment variable | Default | Purpose |
+|---|---|---|
+| `RDS_STORAGE_CLASS` | `mikrotik-rds-nvme` | StorageClass shown and validated by the console status API |
+| `RDS_STATUS_INTERVAL_SECONDS` | `15` | Per-node diagnostic report interval |
+| `RDS_STATUS_TCP_TIMEOUT_SECONDS` | `2` | Timeout for the lightweight TCP connectivity probe to the NVMe/TCP target |
+| `RDS_STATUS_EVENT_AGE_MINUTES` | `60` | Age window used for recent CSI/NVMe/mount warning events |
+| `RDS_CONSOLE_PORT` | `9443` | HTTPS port for plugin assets and the read-only status API |
+| `RDS_CONSOLE_STATIC_DIR` | `/opt/console-plugin` | Built console plugin assets served by the console/status container |
+
+The node reporter does not run `nvme discover` or continuous jumbo pings. It reads the selected route and interface state, performs a short TCP connection attempt to the configured target port, and inspects existing NVMe controller state from sysfs.
+
 ### StorageClass overrides
 
 One controller deployment can expose different RDS pools or data-plane endpoints by overriding the global defaults in a StorageClass. Supported provisioner parameters are:
@@ -139,6 +175,54 @@ volumeMode: Filesystem
 Filesystem mode currently supports **XFS only**. If Kubernetes leaves the filesystem type empty, the node plugin defaults it to `xfs`. On first publish the driver probes the NVMe namespace with `blkid`. It runs `mkfs.xfs` only when the namespace is completely signature-free. An existing XFS filesystem is mounted as-is, including after a node or cluster reboot. If the device contains another filesystem or any other recognizable block signature, the driver refuses to format it. The driver never uses `mkfs.xfs -f`.
 
 The runtime image includes `xfsprogs` for `mkfs.xfs`; `util-linux` supplies `blkid`, `mount`, `umount`, `findmnt`, and `blockdev`. The `CSIDriver` manifest sets `fsGroupPolicy: ReadWriteOnceWithFSType`, so kubelet can apply pod `fsGroup` ownership to mounted RWO filesystem volumes when required by workloads such as the image registry.
+
+## NVMe/TCP data-plane networking
+
+The node plugin does not hard-code a source address. When `RDS_USE_ROUTE_SOURCE_ADDRESS=true`, it runs `ip route get <targetAddress>` and passes the route-selected source address to `nvme connect --host-traddr`. This makes Linux routing the source of truth for the NVMe/TCP initiator address.
+
+Two common VLAN designs are valid:
+
+1. **Guest/node tagging:** the OpenShift node owns a VLAN interface such as `bond1.100` or `ens224.100`, and the upstream switch/port group carries VLAN 100 as a trunk.
+2. **Hypervisor/switch tagging:** a VMware port group or upstream access port already places the vNIC in VLAN 100, so the OpenShift node uses the base interface directly (for example `ens224`) and no `.100` VLAN subinterface should exist in the guest.
+
+Do not configure both forms for the same link. `RDS_STORAGE_INTERFACE` can be left empty so the kernel-selected route is accepted, or set to the expected interface when you intentionally want the driver to enforce the data path.
+
+Every node must have a **unique source IP** on the RDS data network. Duplicate storage IPs can cause ARP/MAC flapping and intermittent `nvme connect` timeouts. This is especially important because the driver intentionally uses the route source as `--host-traddr`.
+
+A useful cluster-wide validation is:
+
+```bash
+RDS_TARGET=172.16.100.125
+
+for NODE in $(oc get nodes -o name | cut -d/ -f2); do
+  echo
+  echo "===== ${NODE} ====="
+  oc debug node/${NODE} --quiet -- chroot /host \
+    ip route get "${RDS_TARGET}"
+done
+```
+
+Each storage-capable node should show its own expected source address. For example:
+
+```text
+ocp133 -> src 172.16.100.133
+ocp134 -> src 172.16.100.134
+ocp135 -> src 172.16.100.135
+```
+
+After a volume is attached, verify the live controller with:
+
+```bash
+oc debug node/<node> --quiet -- chroot /host nvme list-subsys
+```
+
+The RDS controller line should show the expected target and source, for example:
+
+```text
+traddr=172.16.100.125,trsvcid=4420,host_traddr=172.16.100.134,src_addr=172.16.100.134
+```
+
+An initial `nvme connect` can fail while node networking is still converging during boot. Kubelet retries the CSI publish operation. Persistent or repeated timeouts should be investigated by checking `ip route get`, neighbor/ARP state, unique source addressing, interface MTU, and TCP reachability to port 4420 before changing CSI settings.
 
 ## Optional RouterOS storage preparation and maintenance scripts
 
@@ -718,7 +802,7 @@ Quay image references use the registry form `quay.io/<namespace>/<repository>:<t
 For example, if the Quay namespace is `singlecheeze`, use:
 
 ```text
-quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
+quay.io/singlecheeze/mikrotik-rds-csi:0.4.0
 ```
 
 Authenticate to Quay before pushing:
@@ -730,7 +814,7 @@ podman login quay.io
 Use your Quay username/password or a robot account/token that has write access to the repository. Then build and push:
 
 ```bash
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.4.0
 podman build -f Containerfile -t "${IMAGE}" .
 podman push "${IMAGE}"
 ```
@@ -745,10 +829,10 @@ If an image was already built with the incorrect `/repository/` path, it does no
 
 ```bash
 podman tag \
-  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.3.0 \
-  quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
+  quay.io/repository/YOUR_USER/mikrotik-rds-csi:0.4.0 \
+  quay.io/YOUR_USER/mikrotik-rds-csi:0.4.0
 
-IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.3.0
+IMAGE=quay.io/YOUR_USER/mikrotik-rds-csi:0.4.0
 podman push "${IMAGE}"
 ```
 
@@ -760,13 +844,13 @@ Update `deploy/openshift/kustomization.yaml`:
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
     newName: quay.io/YOUR_USER/mikrotik-rds-csi
-    newTag: 0.3.0
+    newTag: 0.4.0
 ```
 
 The base manifests intentionally keep the placeholder image:
 
 ```text
-quay.io/REPLACE_ME/mikrotik-rds-csi:0.3.0
+quay.io/REPLACE_ME/mikrotik-rds-csi:0.4.0
 ```
 
 in both `03-controller.yaml` and `04-node.yaml`. Because deployment uses Kustomize (`oc apply -k`), you do **not** need to edit those two manifests separately. The `images` entry in `kustomization.yaml` rewrites the matching CSI driver image in both the controller Deployment and node DaemonSet.
@@ -782,8 +866,8 @@ oc kustomize deploy/openshift | grep -E 'image:.*mikrotik-rds-csi'
 For a `singlecheeze` repository, the rendered output should contain two CSI driver references similar to:
 
 ```text
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
-image: quay.io/singlecheeze/mikrotik-rds-csi:0.3.0
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.4.0
+image: quay.io/singlecheeze/mikrotik-rds-csi:0.4.0
 ```
 
 One is the controller container from `03-controller.yaml`; the other is the node-plugin container from `04-node.yaml`.
@@ -843,7 +927,7 @@ use driver version `0.2.2` or newer. The PVC and RouterOS disk do not need to be
 
 ## 8. Filesystem PVC test
 
-Driver version `0.3.0` adds XFS filesystem-mode publishing while retaining the existing raw-block path. Before moving an application such as the internal image registry, validate filesystem provisioning with the optional test manifest:
+Filesystem mode was introduced in `0.3.0` and remains supported in `0.4.0` while retaining the existing raw-block path. Before moving an application such as the internal image registry, validate filesystem provisioning with the optional test manifest:
 
 ```bash
 oc apply -f deploy/openshift/08-test-filesystem.yaml
@@ -992,6 +1076,284 @@ For example:
 oc -n nvme-test exec rds-csi-test -c test -- cat /tmp/fio-rand-read.txt
 ```
 
+## 11. OpenShift console plugin and status API (v0.4.0)
+
+Version `0.4.0` implements the first two console-integration phases as an **optional, read-only** OpenShift 4.22 dynamic plugin. Installing the console components does not change the CSI data path and does not expose RouterOS credentials to browser JavaScript.
+
+The Administrator perspective gains:
+
+```text
+Storage
+  -> MikroTik RDS CSI
+```
+
+The page contains four tabs:
+
+- **Overview** - RDS REST/pool health, CSI controller and node readiness, CSI registration, NVMe/TCP target reachability, usable capacity, node connectivity, and recent warning events.
+- **Nodes** - per-node CSI pod readiness, CSINode registration, route interface, route-selected source IP, duplicate-IP detection, interface MTU/operstate, TCP/4420 reachability, active RDS NVMe controllers/NQNs, report age, the last observed connectivity error, and current errors.
+- **Volumes** - RDS-backed PV/PVC inventory with Block/Filesystem mode, capacity, 32-character volume handle, NQN/target, reclaim policy, phase, and detected Pod/VirtualMachine consumers.
+- **RDS** - RouterOS version/uptime, REST health, configured pool state/mount/filesystem, capacity/reserve, managed CSI disk count, active exports, and the configured NVMe/TCP target.
+
+Recent Kubernetes `Warning` events related to CSI, `MountVolume`, NVMe, the RDS driver, and registry storage are surfaced in the Overview page.
+
+### 11.1 Architecture and credential boundary
+
+```text
+OpenShift web console
+        |
+        | ConsolePlugin backend + UserToken proxy
+        v
+mikrotik-rds-csi-console Service (HTTPS, service-serving certificate)
+        |
+        +-- static dynamic-plugin assets
+        |
+        +-- read-only /api/v1/* status API
+              |
+              +-- Kubernetes API
+              |     Deployment / DaemonSet / CSINode / StorageClass
+              |     PV / PVC / Pod / Event / node-status ConfigMap
+              |
+              +-- RouterOS REST
+                    existing rds-credentials Secret
+                    existing rds-rest-ca ConfigMap
+
+mikrotik-rds-csi-node-status DaemonSet
+        |
+        +-- hostNetwork
+        +-- ip route get <RDS target>
+        +-- read route-interface MTU/operstate from host /sys
+        +-- short TCP connect to target:4420
+        +-- inspect existing NVMe/TCP controllers in host /sys
+        +-- publish one small status ConfigMap per node
+```
+
+The browser never receives `RDS_USERNAME`, `RDS_PASSWORD`, or the RDS REST CA. The console proxy forwards the logged-in OpenShift user's token to the backend. Before returning diagnostics, the backend performs Kubernetes `SelfSubjectAccessReview` checks and requires the user to be able to list Nodes and PersistentVolumes.
+
+The node reporter deliberately does **not** run continuous `nvme discover`, filesystem operations, jumbo pings, or destructive diagnostics. It only performs inexpensive read-only checks. Node reports default to every 15 seconds and are considered stale after three missed intervals (minimum 45 seconds).
+
+The console integration is additive. `deploy/console` does **not** include or reapply `deploy/openshift`, so installing it cannot overwrite a deployment-specific CSI ConfigMap such as a local `deploy/openshift-lab-tailored` configuration.
+
+### 11.2 Build and push v0.4.0
+
+The release uses two images:
+
+1. the normal CSI image, which now also contains the `node-status` reporter mode;
+2. a console/status image that builds the React dynamic plugin and serves both its static assets and the HTTPS status API.
+
+```bash
+export CSI_IMAGE=quay.io/singlecheeze/mikrotik-rds-csi:0.4.0
+export CONSOLE_IMAGE=quay.io/singlecheeze/mikrotik-rds-csi-console:0.4.0
+
+podman build -f Containerfile -t "${CSI_IMAGE}" .
+podman push "${CSI_IMAGE}"
+
+podman build -f Containerfile.console -t "${CONSOLE_IMAGE}" .
+podman push "${CONSOLE_IMAGE}"
+```
+
+`Containerfile.console` builds against the OpenShift Console 4.22 dynamic-plugin SDK, React 18, Webpack 5, and PatternFly 6. The console build needs outbound access to the npm registry during the container build.
+
+Update your existing CSI deployment to the v0.4.0 driver image first. For a deployment-specific Kustomize tree such as `deploy/openshift-lab-tailored`, keep all of its current RDS/network settings and change only the image tag:
+
+```yaml
+images:
+  - name: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newName: quay.io/singlecheeze/mikrotik-rds-csi
+    newTag: 0.4.0
+```
+
+Then apply that existing CSI deployment normally:
+
+```bash
+oc apply -k deploy/openshift-lab-tailored
+
+oc -n mikrotik-rds-csi rollout status deployment/mikrotik-rds-csi-controller
+oc -n mikrotik-rds-csi rollout status daemonset/mikrotik-rds-csi-node
+```
+
+If you use the stock `deploy/openshift` tree instead, configure its `01-config.yaml`, Secret, CA, and Kustomize image override as documented earlier, then apply that tree.
+
+### 11.3 Configure and deploy the console components
+
+Edit `deploy/console/kustomization.yaml` so the two `newName` values point at your images:
+
+```yaml
+images:
+  - name: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newName: quay.io/singlecheeze/mikrotik-rds-csi
+    newTag: 0.4.0
+  - name: quay.io/REPLACE_ME/mikrotik-rds-csi-console
+    newName: quay.io/singlecheeze/mikrotik-rds-csi-console
+    newTag: 0.4.0
+```
+
+Render it before applying:
+
+```bash
+oc kustomize deploy/console | grep -E 'image:.*mikrotik-rds-csi'
+```
+
+You should see the v0.4.0 CSI image for the standalone node-status DaemonSet and the v0.4.0 console image for the status/plugin Deployment.
+
+Apply the optional integration:
+
+```bash
+oc apply -k deploy/console
+```
+
+Wait for both new workloads:
+
+```bash
+oc -n mikrotik-rds-csi rollout status daemonset/mikrotik-rds-csi-node-status
+oc -n mikrotik-rds-csi rollout status deployment/mikrotik-rds-csi-console
+```
+
+Verify the service-serving certificate and plugin resource:
+
+```bash
+oc -n mikrotik-rds-csi get secret mikrotik-rds-csi-console-tls
+oc -n mikrotik-rds-csi get service mikrotik-rds-csi-console
+oc get consoleplugin mikrotik-rds-csi-console
+```
+
+The Service annotation asks the OpenShift service CA operator to populate `mikrotik-rds-csi-console-tls`. Both the plugin backend and its `status` proxy use the resulting HTTPS Service.
+
+### 11.4 Enable the dynamic plugin
+
+Installing a `ConsolePlugin` resource does not automatically enable it. Preserve any plugins already enabled on the cluster while adding this one:
+
+```bash
+PLUGIN=mikrotik-rds-csi-console
+
+PLUGINS=$(oc get consoles.operator.openshift.io cluster -o json | \
+  jq -c --arg plugin "${PLUGIN}" \
+  '((.spec.plugins // []) + [$plugin] | unique)')
+
+oc patch consoles.operator.openshift.io cluster \
+  --type=merge \
+  -p "{\"spec\":{\"plugins\":${PLUGINS}}}"
+```
+
+Confirm it is enabled:
+
+```bash
+oc get console.operator.openshift.io cluster \
+  -o jsonpath='{.spec.plugins}{"\n"}'
+```
+
+Refresh the OpenShift web console and navigate to **Administrator -> Storage -> MikroTik RDS CSI**. The console can take a short period to load newly enabled dynamic-plugin configuration.
+
+### 11.5 Validate node diagnostic reports
+
+Each reporter publishes a ConfigMap labeled `rds.csi.mikrotik.com/node-status=true`:
+
+```bash
+oc -n mikrotik-rds-csi get configmap \
+  -l rds.csi.mikrotik.com/node-status=true
+```
+
+Inspect one report:
+
+```bash
+oc -n mikrotik-rds-csi get configmap \
+  mikrotik-rds-node-status-ocp134.localdomain \
+  -o jsonpath='{.data.status\.json}' | jq
+```
+
+A healthy report resembles:
+
+```json
+{
+  "node": "ocp134.localdomain",
+  "route": {
+    "interface": "ens224",
+    "sourceIp": "172.16.100.134"
+  },
+  "interface": {
+    "mtu": 9000,
+    "operstate": "up"
+  },
+  "targetReachable": true,
+  "activeControllers": 1,
+  "connectedNQNs": [
+    "nqn.2026-09.com.mikrotik:rds2216.csi-..."
+  ],
+  "healthy": true
+}
+```
+
+The central API compares all displayed node reports. If two expected CSI nodes report the same `route.sourceIp`, the page raises a critical duplicate-source-IP alert and marks both nodes unhealthy.
+
+Reporter logs are separate from the CSI node plugin:
+
+```bash
+oc -n mikrotik-rds-csi logs \
+  daemonset/mikrotik-rds-csi-node-status \
+  -c status-reporter \
+  --prefix=true
+```
+
+### 11.6 Status API
+
+The console backend exposes these read-only endpoints through the `ConsolePlugin` proxy:
+
+```text
+GET /api/v1/health
+GET /api/v1/overview
+GET /api/v1/rds
+GET /api/v1/nodes
+GET /api/v1/volumes
+GET /api/v1/events
+```
+
+`/healthz` is unauthenticated and exists only for Kubernetes readiness/liveness probes. `/api/v1/*` requires the user token forwarded by the console proxy and performs server-side authorization checks.
+
+The API's Kubernetes ServiceAccount has read-only cluster access to the resources required for aggregation. Node reporters only receive namespace-scoped permission to create/update their own diagnostic ConfigMap class. No console component receives CSI provisioning/deletion privileges.
+
+### 11.7 What the node checks mean
+
+The console's source address is intentionally the same source of truth used by the CSI node path:
+
+```bash
+ip route get <RDS_NVME_TARGET_ADDRESS>
+```
+
+When `RDS_USE_ROUTE_SOURCE_ADDRESS=true`, that route-selected `src` is the address the CSI driver supplies to `nvme connect --host-traddr`. Therefore a wrong route source in the console is actionable before the next PVC attach occurs.
+
+The node table should normally show, for the current VMware/access-port lab design:
+
+```text
+ocp133.localdomain  ens224  172.16.100.133  MTU 9000  target reachable
+ocp134.localdomain  ens224  172.16.100.134  MTU 9000  target reachable
+ocp135.localdomain  ens224  172.16.100.135  MTU 9000  target reachable
+```
+
+For a guest-tagged design, seeing `bond1.100` or `ens224.100` is equally valid if that is the interface returned by the node's actual route.
+
+`activeControllers=0` is not by itself a failure. A node can be completely healthy while no RDS-backed workload is currently attached to it. `targetReachable=false`, a stale report, a non-Ready CSI node pod, missing CSINode registration, an enforced-interface mismatch, or a duplicate source IP are health failures.
+
+### 11.8 Troubleshooting the plugin
+
+Start with:
+
+```bash
+oc get consoleplugin mikrotik-rds-csi-console -o yaml
+oc -n mikrotik-rds-csi get pods -o wide
+oc -n mikrotik-rds-csi get service mikrotik-rds-csi-console -o yaml
+oc -n mikrotik-rds-csi logs deployment/mikrotik-rds-csi-console
+oc -n mikrotik-rds-csi get configmap -l rds.csi.mikrotik.com/node-status=true
+```
+
+If the page does not appear, confirm the plugin is in `console.operator.openshift.io/cluster.spec.plugins` and refresh the browser. If it appears but reports an authorization error, the logged-in user must be able to list cluster Nodes and PersistentVolumes. If the plugin assets fail to load, verify the console Deployment is Ready, the HTTPS Service selector/port are correct, and the service-serving certificate Secret exists.
+
+The console source lives in `console-plugin/`. The backend/status implementation is in `mikrotik_rds_csi/status_api.py`, `mikrotik_rds_csi/node_status.py`, and `mikrotik_rds_csi/kube.py`. The optional manifests live in `deploy/console/`.
+
+OpenShift 4.22 dynamic-plugin details are documented by Red Hat at:
+
+- https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/web_console/dynamic-plugins
+
+The OpenShift console provides the dynamic-plugin mechanism, but custom plugin code remains project code and should be versioned and tested with the CSI driver.
+
 ## Delete behavior and safety
 
 RouterOS deletes the `/disk` object separately from its file-backed image. The driver therefore records the actual `file-path` from the RouterOS disk before deleting the export, removes the disk object, then removes that exact backing file.
@@ -1006,4 +1368,4 @@ csi-0123456789abcdef0123456789ab
 
 That retains 112 bits of deterministic hash space while ensuring every dynamically provisioned RouterOS disk `slot` is exactly 32 characters long. The managed-volume guard accepts only this `csi-` plus 28-hex-character format, and `DeleteVolume` refuses IDs outside it.
 
-This remains an experimental driver. Before production use, add CSI conformance/sanity testing, controller leader election/HA, stronger backend ownership metadata, failure-injection tests, node-reboot recovery tests, and snapshot/clone/expansion support as required.
+This remains an experimental driver. Before production use, add CSI conformance/sanity testing, controller leader election/HA, stronger backend ownership metadata, automated failure-injection and reboot-recovery testing, and snapshot/clone/expansion support as required.

@@ -9,12 +9,6 @@ import signal
 
 import grpc
 
-from .config import ControllerConfig, NodeConfig
-from .controller import ControllerService
-from .generated import csi_pb2_grpc
-from .identity import IdentityService
-from .node import NodeService
-
 
 LOG = logging.getLogger(__name__)
 
@@ -26,7 +20,15 @@ def _socket_target(endpoint: str) -> tuple[str, Path | None]:
     return endpoint, None
 
 
-def serve(mode: str, endpoint: str) -> None:
+def serve_csi(mode: str, endpoint: str) -> None:
+    # Lazy imports keep the diagnostic/status modes independent from the gRPC
+    # service startup path while still shipping in the same image.
+    from .config import ControllerConfig, NodeConfig
+    from .controller import ControllerService
+    from .generated import csi_pb2_grpc
+    from .identity import IdentityService
+    from .node import NodeService
+
     target, socket_path = _socket_target(endpoint)
     if socket_path:
         socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +47,7 @@ def serve(mode: str, endpoint: str) -> None:
     elif mode == "node":
         csi_pb2_grpc.add_NodeServicer_to_server(NodeService(NodeConfig.from_env()), server)
     else:
-        raise ValueError(f"unsupported mode: {mode}")
+        raise ValueError(f"unsupported CSI mode: {mode}")
 
     if server.add_insecure_port(target) == 0:
         raise RuntimeError(f"failed to bind CSI endpoint {endpoint}")
@@ -74,10 +76,40 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["controller", "node"], required=True)
+    parser.add_argument(
+        "--mode",
+        choices=["controller", "node", "node-status", "status-api"],
+        required=True,
+    )
     parser.add_argument("--endpoint", default=os.getenv("CSI_ENDPOINT", "unix:///csi/csi.sock"))
+    parser.add_argument("--listen-address", default=None)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--tls-cert", default=None)
+    parser.add_argument("--tls-key", default=None)
+    parser.add_argument("--static-dir", default=None)
     args = parser.parse_args()
-    serve(args.mode, args.endpoint)
+
+    if args.mode in {"controller", "node"}:
+        serve_csi(args.mode, args.endpoint)
+        return
+    if args.mode == "node-status":
+        from .node_status import run_node_status_reporter
+
+        run_node_status_reporter()
+        return
+    if args.mode == "status-api":
+        from .status_api import StatusAPIConfig, serve_status_api
+
+        config = StatusAPIConfig.from_env(
+            static_dir=args.static_dir,
+            listen_address=args.listen_address,
+            port=args.port,
+            tls_cert=args.tls_cert,
+            tls_key=args.tls_key,
+        )
+        serve_status_api(config)
+        return
+    raise RuntimeError(f"unsupported mode {args.mode}")
 
 
 if __name__ == "__main__":

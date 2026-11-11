@@ -51,6 +51,10 @@ class RouterOSClient:
         except ValueError as exc:
             raise RouterOSError(f"RouterOS REST {method} {path} returned non-JSON data") from exc
 
+    def get_system_resource(self) -> dict[str, Any]:
+        data = self._request("GET", "system/resource")
+        return data if isinstance(data, dict) else {}
+
     def list_disks(self) -> list[dict[str, Any]]:
         data = self._request("GET", "disk")
         return data if isinstance(data, list) else []
