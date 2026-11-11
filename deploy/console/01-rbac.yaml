@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mikrotik-rds-csi-console
+  namespace: mikrotik-rds-csi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mikrotik-rds-csi-console-read
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - persistentvolumes
+      - persistentvolumeclaims
+      - pods
+      - events
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - csidrivers
+      - csinodes
+      - storageclasses
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mikrotik-rds-csi-console-read
+subjects:
+  - kind: ServiceAccount
+    name: mikrotik-rds-csi-console
+    namespace: mikrotik-rds-csi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mikrotik-rds-csi-console-read
+---
+# Node-status reporters publish only their diagnostic snapshot ConfigMaps in the
+# CSI namespace. They do not need cluster-wide write privileges.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mikrotik-rds-csi-node-status
+  namespace: mikrotik-rds-csi
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mikrotik-rds-csi-node-status
+  namespace: mikrotik-rds-csi
+subjects:
+  - kind: ServiceAccount
+    name: mikrotik-rds-csi-node
+    namespace: mikrotik-rds-csi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mikrotik-rds-csi-node-status
+---
+# The status API reads the node snapshots written by the node reporters.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mikrotik-rds-csi-console-node-status-read
+  namespace: mikrotik-rds-csi
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mikrotik-rds-csi-console-node-status-read
+  namespace: mikrotik-rds-csi
+subjects:
+  - kind: ServiceAccount
+    name: mikrotik-rds-csi-console
+    namespace: mikrotik-rds-csi
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mikrotik-rds-csi-console-node-status-read

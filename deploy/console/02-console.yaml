@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mikrotik-rds-csi-console
+  namespace: mikrotik-rds-csi
+  labels:
+    app: mikrotik-rds-csi-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mikrotik-rds-csi-console
+  template:
+    metadata:
+      labels:
+        app: mikrotik-rds-csi-console
+    spec:
+      serviceAccountName: mikrotik-rds-csi-console
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: console
+          image: quay.io/REPLACE_ME/mikrotik-rds-csi-console:0.4.0
+          imagePullPolicy: Always
+          args:
+            - --mode=status-api
+            - --listen-address=0.0.0.0
+            - --port=9443
+            - --static-dir=/opt/console-plugin
+            - --tls-cert=/var/serving-cert/tls.crt
+            - --tls-key=/var/serving-cert/tls.key
+          envFrom:
+            - configMapRef:
+                name: mikrotik-rds-csi-config
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RDS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: rds-credentials
+                  key: username
+            - name: RDS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rds-credentials
+                  key: password
+            - name: RDS_STORAGE_CLASS
+              value: mikrotik-rds-nvme
+            - name: RDS_STATUS_EVENT_AGE_MINUTES
+              value: "60"
+            - name: RDS_STATUS_INTERVAL_SECONDS
+              value: "15"
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+          volumeMounts:
+            - name: serving-cert
+              mountPath: /var/serving-cert
+              readOnly: true
+            - name: rds-ca
+              mountPath: /etc/rds-ca
+              readOnly: true
+      volumes:
+        - name: serving-cert
+          secret:
+            secretName: mikrotik-rds-csi-console-tls
+        - name: rds-ca
+          configMap:
+            name: rds-rest-ca
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mikrotik-rds-csi-console
+  namespace: mikrotik-rds-csi
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: mikrotik-rds-csi-console-tls
+spec:
+  selector:
+    app: mikrotik-rds-csi-console
+  ports:
+    - name: https
+      port: 9443
+      targetPort: https
+      protocol: TCP
+---
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: mikrotik-rds-csi-console
+spec:
+  displayName: MikroTik RDS CSI
+  backend:
+    type: Service
+    service:
+      name: mikrotik-rds-csi-console
+      namespace: mikrotik-rds-csi
+      port: 9443
+      basePath: /
+  proxy:
+    - alias: status
+      authorization: UserToken
+      endpoint:
+        type: Service
+        service:
+          name: mikrotik-rds-csi-console
+          namespace: mikrotik-rds-csi
+          port: 9443

@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: mikrotik-rds-csi-node-status
+  namespace: mikrotik-rds-csi
+  labels:
+    app: mikrotik-rds-csi-node-status
+spec:
+  selector:
+    matchLabels:
+      app: mikrotik-rds-csi-node-status
+  template:
+    metadata:
+      labels:
+        app: mikrotik-rds-csi-node-status
+    spec:
+      # Reuse the CSI node ServiceAccount. The base driver already grants this SA
+      # the OpenShift privileged SCC required for hostNetwork/hostPath access. The
+      # container itself remains non-privileged and only reads host sysfs.
+      serviceAccountName: mikrotik-rds-csi-node
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: status-reporter
+          image: quay.io/REPLACE_ME/mikrotik-rds-csi:0.4.0
+          imagePullPolicy: Always
+          args:
+            - --mode=node-status
+          envFrom:
+            - configMapRef:
+                name: mikrotik-rds-csi-config
+          env:
+            - name: NODE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: RDS_STATUS_INTERVAL_SECONDS
+              value: "15"
+            - name: RDS_STATUS_TCP_TIMEOUT_SECONDS
+              value: "2"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsUser: 0
+          volumeMounts:
+            - name: host-sys
+              mountPath: /sys
+              readOnly: true
+      volumes:
+        - name: host-sys
+          hostPath:
+            path: /sys
+            type: Directory
