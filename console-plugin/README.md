@@ -34,6 +34,19 @@ npm run build
 
 The generated `dist/` directory is served by `Containerfile.console` through the Python status backend. `dist/` and `node_modules/` are intentionally ignored by git.
 
+### Webpack TypeScript configuration
+
+`tsconfig.json` uses ES modules, so `webpack.config.ts` must not rely on Node's CommonJS-only global `__dirname`. The configuration derives its directory from `import.meta.url` instead:
+
+```ts
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+```
+
+This is required for the Node 22 / webpack-cli build used by `Containerfile.console`.
+
 The repository currently does not include a generated `package-lock.json`; generate and commit one if you want fully locked npm dependency resolution for repeatable production builds, then change the container build to `npm ci`.
 
 ## Backend

@@ -1151,7 +1151,7 @@ podman build -f Containerfile.console -t "${CONSOLE_IMAGE}" .
 podman push "${CONSOLE_IMAGE}"
 ```
 
-`Containerfile.console` builds against the OpenShift Console 4.22 dynamic-plugin SDK, React 18, Webpack 5, and PatternFly 6. The console build needs outbound access to the npm registry during the container build.
+`Containerfile.console` builds against the OpenShift Console 4.22 dynamic-plugin SDK, React 18, Webpack 5, and PatternFly 6. The console build needs outbound access to the npm registry during the container build. The TypeScript webpack configuration is loaded as an ES module under Node 22, so the repository derives its config directory from `import.meta.url` rather than the CommonJS-only `__dirname` global.
 
 Update your existing CSI deployment to the v0.4.0 driver image first. For a deployment-specific Kustomize tree such as `deploy/openshift-lab-tailored`, keep all of its current RDS/network settings and change only the image tag:
 
