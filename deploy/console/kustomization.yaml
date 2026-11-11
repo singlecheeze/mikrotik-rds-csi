@@ -6,8 +6,8 @@ resources:
   - 03-node-status.yaml
 images:
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi
-    newName: quay.io/REPLACE_ME/mikrotik-rds-csi
+    newName: quay.io/singlecheeze/mikrotik-rds-csi
     newTag: 0.4.0
   - name: quay.io/REPLACE_ME/mikrotik-rds-csi-console
-    newName: quay.io/REPLACE_ME/mikrotik-rds-csi-console
+    newName: quay.io/singlecheeze/mikrotik-rds-csi-console
     newTag: 0.4.0
