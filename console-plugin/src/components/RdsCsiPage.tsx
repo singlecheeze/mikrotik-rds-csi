@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import {
   Alert,
   Bullseye,
@@ -29,8 +30,18 @@ import { SyncAltIcon } from '@patternfly/react-icons';
 import { Table, Tbody, Td, Th, Thead, Tr } from '@patternfly/react-table';
 import { fetchOverview } from '../api';
 import type { NodeStatus, OverviewResponse, RdsStatus, VolumeStatus, WarningEvent } from '../types';
-
 const POLL_MS = 15000;
+
+// Keep spacing local to this plugin and aligned with PatternFly's medium gutter.
+const SECTION_GAP = 'var(--pf-t--global--spacer--md, 1rem)';
+const SectionStack = ({ children }: { children: ReactNode }) => (
+  <div
+    className="rds-csi-section-stack"
+    style={{ display: 'flex', flexDirection: 'column', gap: SECTION_GAP, minWidth: 0 }}
+  >
+    {children}
+  </div>
+);
 
 const formatBytes = (value?: number | null): string => {
   if (value === undefined || value === null || Number.isNaN(value)) return 'Unknown';
@@ -43,7 +54,6 @@ const formatBytes = (value?: number | null): string => {
   }
   return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
 };
-
 const formatTime = (value?: string): string => {
   if (!value) return 'Unknown';
   const parsed = new Date(value);
@@ -53,7 +63,6 @@ const formatTime = (value?: string): string => {
 const StatusLabel = ({ healthy, text }: { healthy?: boolean; text?: string }) => (
   <Label color={healthy ? 'green' : 'red'}>{text ?? (healthy ? 'Healthy' : 'Attention')}</Label>
 );
-
 const SummaryCard = ({ title, value, healthy }: { title: string; value: string; healthy?: boolean }) => (
   <Card isCompact>
     <CardHeader>
@@ -67,7 +76,6 @@ const SummaryCard = ({ title, value, healthy }: { title: string; value: string; 
     </CardBody>
   </Card>
 );
-
 const NodeTable = ({ nodes }: { nodes: NodeStatus[] }) => (
   <Table aria-label="MikroTik RDS CSI node connectivity">
     <Thead>
@@ -125,7 +133,6 @@ const NodeTable = ({ nodes }: { nodes: NodeStatus[] }) => (
     </Tbody>
   </Table>
 );
-
 const VolumeTable = ({ volumes }: { volumes: VolumeStatus[] }) => (
   <Table aria-label="MikroTik RDS CSI volumes">
     <Thead>
@@ -169,7 +176,6 @@ const VolumeTable = ({ volumes }: { volumes: VolumeStatus[] }) => (
     </Tbody>
   </Table>
 );
-
 const EventsTable = ({ events }: { events: WarningEvent[] }) => (
   <Table aria-label="Recent MikroTik RDS CSI warning events" variant="compact">
     <Thead>
@@ -195,7 +201,6 @@ const EventsTable = ({ events }: { events: WarningEvent[] }) => (
     </Tbody>
   </Table>
 );
-
 const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
   const pool = rds.pool;
   const usedPercent = pool && pool.totalBytes > 0
@@ -207,16 +212,18 @@ const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
         <Card>
           <CardHeader><CardTitle>RDS endpoint</CardTitle></CardHeader>
           <CardBody>
-            <DescriptionList isHorizontal>
-              <DescriptionListGroup><DescriptionListTerm>REST</DescriptionListTerm><DescriptionListDescription><StatusLabel healthy={rds.reachable} text={rds.reachable ? 'Reachable' : 'Unreachable'} /></DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>RouterOS</DescriptionListTerm><DescriptionListDescription>{rds.routerOsVersion || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>Hardware</DescriptionListTerm><DescriptionListDescription>{rds.boardName || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>Uptime</DescriptionListTerm><DescriptionListDescription>{rds.uptime || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>NVMe/TCP target</DescriptionListTerm><DescriptionListDescription>{rds.target.address}:{rds.target.port}</DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>Managed volumes</DescriptionListTerm><DescriptionListDescription>{rds.managedVolumes ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-              <DescriptionListGroup><DescriptionListTerm>Active exports</DescriptionListTerm><DescriptionListDescription>{rds.activeExports ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-            </DescriptionList>
-            {rds.error && <Alert isInline variant="danger" title="RDS status error">{rds.error}</Alert>}
+            <SectionStack>
+              <DescriptionList isHorizontal>
+                <DescriptionListGroup><DescriptionListTerm>REST</DescriptionListTerm><DescriptionListDescription><StatusLabel healthy={rds.reachable} text={rds.reachable ? 'Reachable' : 'Unreachable'} /></DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>RouterOS</DescriptionListTerm><DescriptionListDescription>{rds.routerOsVersion || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Hardware</DescriptionListTerm><DescriptionListDescription>{rds.boardName || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Uptime</DescriptionListTerm><DescriptionListDescription>{rds.uptime || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>NVMe/TCP target</DescriptionListTerm><DescriptionListDescription>{rds.target.address}:{rds.target.port}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Managed volumes</DescriptionListTerm><DescriptionListDescription>{rds.managedVolumes ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Active exports</DescriptionListTerm><DescriptionListDescription>{rds.activeExports ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+              </DescriptionList>
+              {rds.error && <Alert isInline variant="danger" title="RDS status error">{rds.error}</Alert>}
+            </SectionStack>
           </CardBody>
         </Card>
       </GridItem>
@@ -225,7 +232,7 @@ const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
           <CardHeader><CardTitle>Storage pool</CardTitle></CardHeader>
           <CardBody>
             {pool ? (
-              <>
+              <SectionStack>
                 <DescriptionList isHorizontal>
                   <DescriptionListGroup><DescriptionListTerm>Slot</DescriptionListTerm><DescriptionListDescription>{pool.slot}</DescriptionListDescription></DescriptionListGroup>
                   <DescriptionListGroup><DescriptionListTerm>Path</DescriptionListTerm><DescriptionListDescription>{pool.path}</DescriptionListDescription></DescriptionListGroup>
@@ -236,7 +243,7 @@ const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
                   <DescriptionListGroup><DescriptionListTerm>Usable after reserve</DescriptionListTerm><DescriptionListDescription>{formatBytes(pool.usableBytes)}</DescriptionListDescription></DescriptionListGroup>
                 </DescriptionList>
                 {pool.totalBytes > 0 && <Progress value={usedPercent} title="RDS pool used" />}
-              </>
+              </SectionStack>
             ) : <div>Pool status unavailable.</div>}
           </CardBody>
         </Card>
@@ -244,13 +251,12 @@ const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
     </Grid>
   );
 };
-
 const OverviewTab = ({ data }: { data: OverviewResponse }) => {
   const c = data.cluster;
   const rdsFree = data.rds.pool ? formatBytes(data.rds.pool.usableBytes) : 'Unknown';
   const targetHealthy = data.nodes.items.length > 0 && data.nodes.items.every((node) => node.targetReachable && !node.stale);
   return (
-    <>
+    <SectionStack>
       {data.nodes.duplicateSourceIps.map((duplicate) => (
         <Alert key={duplicate.sourceIp} isInline variant="danger" title={`Duplicate storage source IP: ${duplicate.sourceIp}`}>
           Reported by {duplicate.nodes.join(', ')}. NVMe/TCP initiators must use unique source addresses.
@@ -264,7 +270,6 @@ const OverviewTab = ({ data }: { data: OverviewResponse }) => {
         <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="NVMe target" value={`${data.nodes.items.filter((n) => n.targetReachable).length}/${data.nodes.items.length} reachable`} healthy={targetHealthy} /></GridItem>
         <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="RDS capacity" value={`${rdsFree} usable`} healthy={data.rds.healthy} /></GridItem>
       </Grid>
-
       <Card>
         <CardHeader><CardTitle>Node connectivity</CardTitle></CardHeader>
         <CardBody><NodeTable nodes={data.nodes.items} /></CardBody>
@@ -274,12 +279,11 @@ const OverviewTab = ({ data }: { data: OverviewResponse }) => {
         <CardHeader><CardTitle>Recent warnings</CardTitle></CardHeader>
         <CardBody><EventsTable events={data.events.items} /></CardBody>
       </Card>
-    </>
+    </SectionStack>
   );
 };
-
 const NodesTab = ({ nodes }: { nodes: NodeStatus[] }) => (
-  <>
+  <SectionStack>
     <NodeTable nodes={nodes} />
     {nodes.map((node) => (
       <Card key={`${node.node}-details`} isCompact>
@@ -297,15 +301,13 @@ const NodesTab = ({ nodes }: { nodes: NodeStatus[] }) => (
         </CardBody>
       </Card>
     ))}
-  </>
+  </SectionStack>
 );
-
 const RdsCsiPage = () => {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<string | number>('overview');
-
   const refresh = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
     try {
@@ -318,7 +320,6 @@ const RdsCsiPage = () => {
       setLoading(false);
     }
   }, []);
-
   useEffect(() => {
     refresh(true);
     const timer = window.setInterval(() => refresh(false), POLL_MS);
@@ -330,9 +331,8 @@ const RdsCsiPage = () => {
   if (loading && !data) {
     return <PageSection><Bullseye><Spinner aria-label="Loading MikroTik RDS CSI status" /></Bullseye></PageSection>;
   }
-
   return (
-    <>
+    <SectionStack>
       <PageSection variant="secondary">
         <Flex justifyContent={{ default: 'justifyContentSpaceBetween' }} alignItems={{ default: 'alignItemsCenter' }}>
           <FlexItem>
@@ -345,27 +345,28 @@ const RdsCsiPage = () => {
         </Flex>
       </PageSection>
       <PageSection>
-        {error && <Alert isInline variant="danger" title="Unable to load RDS CSI status">{error}</Alert>}
-        {data && !data.healthy && <Alert isInline variant="warning" title="One or more RDS CSI health checks need attention">Review node connectivity, RDS pool state, CSI readiness, and recent warnings below.</Alert>}
-        {data && (
-          <Tabs activeKey={activeTab} onSelect={(_event, key) => setActiveTab(key)} aria-label="MikroTik RDS CSI views">
-            <Tab eventKey="overview" title={<TabTitleText>Overview</TabTitleText>}>
-              <PageSection><OverviewTab data={data} /></PageSection>
-            </Tab>
-            <Tab eventKey="nodes" title={<TabTitleText>Nodes</TabTitleText>}>
-              <PageSection><NodesTab nodes={data.nodes.items} /></PageSection>
-            </Tab>
-            <Tab eventKey="volumes" title={<TabTitleText>Volumes ({data.volumes.count})</TabTitleText>}>
-              <PageSection><VolumeTable volumes={data.volumes.items} /></PageSection>
-            </Tab>
-            <Tab eventKey="rds" title={<TabTitleText>RDS</TabTitleText>}>
-              <PageSection><RdsDetails rds={data.rds} /></PageSection>
-            </Tab>
-          </Tabs>
-        )}
+        <SectionStack>
+          {error && <Alert isInline variant="danger" title="Unable to load RDS CSI status">{error}</Alert>}
+          {data && !data.healthy && <Alert isInline variant="warning" title="One or more RDS CSI health checks need attention">Review node connectivity, RDS pool state, CSI readiness, and recent warnings below.</Alert>}
+          {data && (
+            <Tabs activeKey={activeTab} onSelect={(_event, key) => setActiveTab(key)} aria-label="MikroTik RDS CSI views">
+              <Tab eventKey="overview" title={<TabTitleText>Overview</TabTitleText>}>
+                <PageSection><OverviewTab data={data} /></PageSection>
+              </Tab>
+              <Tab eventKey="nodes" title={<TabTitleText>Nodes</TabTitleText>}>
+                <PageSection><NodesTab nodes={data.nodes.items} /></PageSection>
+              </Tab>
+              <Tab eventKey="volumes" title={<TabTitleText>Volumes ({data.volumes.count})</TabTitleText>}>
+                <PageSection><VolumeTable volumes={data.volumes.items} /></PageSection>
+              </Tab>
+              <Tab eventKey="rds" title={<TabTitleText>RDS</TabTitleText>}>
+                <PageSection><RdsDetails rds={data.rds} /></PageSection>
+              </Tab>
+            </Tabs>
+          )}
+        </SectionStack>
       </PageSection>
-    </>
+    </SectionStack>
   );
 };
-
 export default RdsCsiPage;
