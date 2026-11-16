@@ -64,7 +64,7 @@ const StatusLabel = ({ healthy, text }: { healthy?: boolean; text?: string }) =>
   <Label color={healthy ? 'green' : 'red'}>{text ?? (healthy ? 'Healthy' : 'Attention')}</Label>
 );
 const SummaryCard = ({ title, value, healthy }: { title: string; value: string; healthy?: boolean }) => (
-  <Card isCompact>
+  <Card isCompact isFullHeight className="rds-csi-summary-card" style={{ minWidth: 0 }}>
     <CardHeader>
       <CardTitle>{title}</CardTitle>
     </CardHeader>
@@ -201,54 +201,76 @@ const EventsTable = ({ events }: { events: WarningEvent[] }) => (
     </Tbody>
   </Table>
 );
+// Give RDS labels a wider shared column; values use the remaining card width.
+// The percentage cap lets the label column shrink on narrow screens instead
+// of forcing the values beyond the edge of the card.
+const RdsDescriptionList = ({ children }: { children: ReactNode }) => (
+  <DescriptionList
+    className="rds-csi-details-list"
+    isHorizontal
+    horizontalTermWidthModifier={{ default: 'min(12rem, 45%)' }}
+    style={{ minWidth: 0 }}
+  >
+    {children}
+  </DescriptionList>
+);
 const RdsDetails = ({ rds }: { rds: RdsStatus }) => {
   const pool = rds.pool;
   const usedPercent = pool && pool.totalBytes > 0
     ? Math.max(0, Math.min(100, ((pool.totalBytes - pool.freeBytes) / pool.totalBytes) * 100))
     : 0;
   return (
-    <Grid hasGutter>
-      <GridItem span={12} lg={6}>
-        <Card>
-          <CardHeader><CardTitle>RDS endpoint</CardTitle></CardHeader>
-          <CardBody>
+    <div
+      className="rds-csi-details-grid"
+      style={{
+        display: 'grid',
+        // Use the available panel width, including when console navigation is open.
+        // Two columns share a row only when both cards have enough room for labels
+        // and values. On narrower panels the cards stack without horizontal overflow.
+        gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 30rem), 1fr))',
+        gap: SECTION_GAP,
+        alignItems: 'stretch',
+        minWidth: 0,
+      }}
+    >
+      {/* Both card backgrounds fill the shared grid row, including the progress bar. */}
+      <Card isFullHeight style={{ minWidth: 0 }}>
+        <CardHeader><CardTitle>RDS endpoint</CardTitle></CardHeader>
+        <CardBody>
+          <SectionStack>
+            <RdsDescriptionList>
+              <DescriptionListGroup><DescriptionListTerm>REST</DescriptionListTerm><DescriptionListDescription><StatusLabel healthy={rds.reachable} text={rds.reachable ? 'Reachable' : 'Unreachable'} /></DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>RouterOS</DescriptionListTerm><DescriptionListDescription>{rds.routerOsVersion || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>Hardware</DescriptionListTerm><DescriptionListDescription>{rds.boardName || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>Uptime</DescriptionListTerm><DescriptionListDescription>{rds.uptime || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>NVMe/TCP target</DescriptionListTerm><DescriptionListDescription>{rds.target.address}:{rds.target.port}</DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>Managed volumes</DescriptionListTerm><DescriptionListDescription>{rds.managedVolumes ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+              <DescriptionListGroup><DescriptionListTerm>Active exports</DescriptionListTerm><DescriptionListDescription>{rds.activeExports ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
+            </RdsDescriptionList>
+            {rds.error && <Alert isInline variant="danger" title="RDS status error">{rds.error}</Alert>}
+          </SectionStack>
+        </CardBody>
+      </Card>
+      <Card isFullHeight style={{ minWidth: 0 }}>
+        <CardHeader><CardTitle>Storage pool</CardTitle></CardHeader>
+        <CardBody>
+          {pool ? (
             <SectionStack>
-              <DescriptionList isHorizontal>
-                <DescriptionListGroup><DescriptionListTerm>REST</DescriptionListTerm><DescriptionListDescription><StatusLabel healthy={rds.reachable} text={rds.reachable ? 'Reachable' : 'Unreachable'} /></DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>RouterOS</DescriptionListTerm><DescriptionListDescription>{rds.routerOsVersion || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>Hardware</DescriptionListTerm><DescriptionListDescription>{rds.boardName || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>Uptime</DescriptionListTerm><DescriptionListDescription>{rds.uptime || 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>NVMe/TCP target</DescriptionListTerm><DescriptionListDescription>{rds.target.address}:{rds.target.port}</DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>Managed volumes</DescriptionListTerm><DescriptionListDescription>{rds.managedVolumes ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-                <DescriptionListGroup><DescriptionListTerm>Active exports</DescriptionListTerm><DescriptionListDescription>{rds.activeExports ?? 'Unknown'}</DescriptionListDescription></DescriptionListGroup>
-              </DescriptionList>
-              {rds.error && <Alert isInline variant="danger" title="RDS status error">{rds.error}</Alert>}
+              <RdsDescriptionList>
+                <DescriptionListGroup><DescriptionListTerm>Slot</DescriptionListTerm><DescriptionListDescription>{pool.slot}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Path</DescriptionListTerm><DescriptionListDescription>{pool.path}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>State</DescriptionListTerm><DescriptionListDescription>{pool.state}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Mounted</DescriptionListTerm><DescriptionListDescription>{pool.mounted ? 'Yes' : 'No'}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Filesystem</DescriptionListTerm><DescriptionListDescription>{pool.filesystem}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Free</DescriptionListTerm><DescriptionListDescription>{formatBytes(pool.freeBytes)}</DescriptionListDescription></DescriptionListGroup>
+                <DescriptionListGroup><DescriptionListTerm>Usable after reserve</DescriptionListTerm><DescriptionListDescription>{formatBytes(pool.usableBytes)}</DescriptionListDescription></DescriptionListGroup>
+              </RdsDescriptionList>
+              {pool.totalBytes > 0 && <Progress value={usedPercent} title="RDS Pool Used" />}
             </SectionStack>
-          </CardBody>
-        </Card>
-      </GridItem>
-      <GridItem span={12} lg={6}>
-        <Card>
-          <CardHeader><CardTitle>Storage pool</CardTitle></CardHeader>
-          <CardBody>
-            {pool ? (
-              <SectionStack>
-                <DescriptionList isHorizontal>
-                  <DescriptionListGroup><DescriptionListTerm>Slot</DescriptionListTerm><DescriptionListDescription>{pool.slot}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>Path</DescriptionListTerm><DescriptionListDescription>{pool.path}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>State</DescriptionListTerm><DescriptionListDescription>{pool.state}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>Mounted</DescriptionListTerm><DescriptionListDescription>{pool.mounted ? 'Yes' : 'No'}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>Filesystem</DescriptionListTerm><DescriptionListDescription>{pool.filesystem}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>Free</DescriptionListTerm><DescriptionListDescription>{formatBytes(pool.freeBytes)}</DescriptionListDescription></DescriptionListGroup>
-                  <DescriptionListGroup><DescriptionListTerm>Usable after reserve</DescriptionListTerm><DescriptionListDescription>{formatBytes(pool.usableBytes)}</DescriptionListDescription></DescriptionListGroup>
-                </DescriptionList>
-                {pool.totalBytes > 0 && <Progress value={usedPercent} title="RDS pool used" />}
-              </SectionStack>
-            ) : <div>Pool status unavailable.</div>}
-          </CardBody>
-        </Card>
-      </GridItem>
-    </Grid>
+          ) : <div>Pool status unavailable.</div>}
+        </CardBody>
+      </Card>
+    </div>
   );
 };
 const OverviewTab = ({ data }: { data: OverviewResponse }) => {
@@ -262,13 +284,19 @@ const OverviewTab = ({ data }: { data: OverviewResponse }) => {
           Reported by {duplicate.nodes.join(', ')}. NVMe/TCP initiators must use unique source addresses.
         </Alert>
       ))}
-      <Grid hasGutter>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="RDS REST" value={data.rds.reachable ? 'Reachable' : 'Unavailable'} healthy={data.rds.healthy} /></GridItem>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="CSI controller" value={`${c.controller.ready ?? 0}/${c.controller.desired ?? 0} Ready`} healthy={c.controller.healthy} /></GridItem>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="Node plugins" value={`${c.nodePlugin.ready ?? 0}/${c.nodePlugin.desired ?? 0} Ready`} healthy={c.nodePlugin.healthy} /></GridItem>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="CSI registration" value={`${c.csiRegistration.registered ?? 0}/${c.csiRegistration.totalNodes ?? 0} nodes`} healthy={c.csiRegistration.healthy} /></GridItem>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="NVMe target" value={`${data.nodes.items.filter((n) => n.targetReachable).length}/${data.nodes.items.length} reachable`} healthy={targetHealthy} /></GridItem>
-        <GridItem span={12} sm={6} md={4} lg={2}><SummaryCard title="RDS capacity" value={`${rdsFree} usable`} healthy={data.rds.healthy} /></GridItem>
+      {/* Equal flexible rows keep all six backgrounds aligned, even when cards wrap.
+          Full-height cards fill their grid items without imposing a fixed pixel height. */}
+      <Grid
+        hasGutter
+        className="rds-csi-summary-grid"
+        style={{ gridAutoRows: '1fr', alignItems: 'stretch', minWidth: 0 }}
+      >
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="RDS REST" value={data.rds.reachable ? 'Reachable' : 'Unavailable'} healthy={data.rds.healthy} /></GridItem>
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="CSI controller" value={`${c.controller.ready ?? 0}/${c.controller.desired ?? 0} Ready`} healthy={c.controller.healthy} /></GridItem>
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="Node plugins" value={`${c.nodePlugin.ready ?? 0}/${c.nodePlugin.desired ?? 0} Ready`} healthy={c.nodePlugin.healthy} /></GridItem>
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="CSI registration" value={`${c.csiRegistration.registered ?? 0}/${c.csiRegistration.totalNodes ?? 0} nodes`} healthy={c.csiRegistration.healthy} /></GridItem>
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="NVMe target" value={`${data.nodes.items.filter((n) => n.targetReachable).length}/${data.nodes.items.length} reachable`} healthy={targetHealthy} /></GridItem>
+        <GridItem span={12} sm={6} md={4} lg={2} style={{ minWidth: 0 }}><SummaryCard title="RDS capacity" value={`${rdsFree} usable`} healthy={data.rds.healthy} /></GridItem>
       </Grid>
       <Card>
         <CardHeader><CardTitle>Node connectivity</CardTitle></CardHeader>
