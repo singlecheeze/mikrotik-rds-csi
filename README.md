@@ -900,17 +900,22 @@ oc get storageprofile mikrotik-rds-nvme -o yaml
 The intended claim properties are raw block + RWO. If CDI does not infer them automatically:
 
 ```bash
-oc patch storageprofile mikrotik-rds-nvme --type=merge -p '
-{
-  "spec": {
-    "claimPropertySets": [
-      {
-        "accessModes": ["ReadWriteOnce"],
-        "volumeMode": "Block"
-      }
-    ]
-  }
-}'
+oc apply -f - <<'EOF'
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: StorageProfile
+metadata:
+  name: mikrotik-rds-nvme
+  annotations:
+    cdi.kubevirt.io/minimumSupportedPvcSize: "1Gi"
+spec:
+  claimPropertySets:
+    - accessModes:
+        - ReadWriteOnce
+      volumeMode: Block
+    - accessModes:
+        - ReadWriteOnce
+      volumeMode: Filesystem
+EOF
 ```
 
 ### Raw block publish on RHCOS
